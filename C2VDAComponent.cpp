@@ -115,9 +115,9 @@ int32_t frameIndexToBitstreamId(c2_cntr64_t frameIndex) {
     return static_cast<int32_t>(frameIndex.peeku() & 0x3FFFFFFF);
 }
 
-const C2String kH264DecoderName = "c2.v4l2.h264.decoder";
-const C2String kVP8DecoderName = "c2.v4l2.vp8.decoder";
-const C2String kVP9DecoderName = "c2.v4l2.vp9.decoder";
+const C2String kH264DecoderName = "c2.vda.avc.decoder";
+const C2String kVP8DecoderName = "c2.vda.vp8.decoder";
+const C2String kVP9DecoderName = "c2.vda.vp9.decoder";
 
 }  // namespace
 
@@ -1339,7 +1339,8 @@ void C2VDAComponent::reportAbandonedWorks() {
         std::unique_ptr<C2Work> work(std::move(mPendingWorks.front()));
         mPendingWorks.pop_front();
 
-        work->result = static_cast<c2_status_t>(-1);  // What should this value be?
+        // TODO: correlate the definition of flushed work result to framework.
+        work->result = C2_NOT_FOUND;
         // When the work is abandoned, the input buffers vector shall be cleared by component.
         work->input.buffers.clear();
         abandonedWorks.emplace_back(std::move(work));
