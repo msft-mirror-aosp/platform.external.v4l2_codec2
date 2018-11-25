@@ -13,21 +13,24 @@
 
 #define __C2_GENERATE_GLOBAL_VARS__
 #include <C2VDAAllocatorStore.h>
-#include <C2VDACommon.h>
 #include <C2VDAComponent.h>
 #include <C2VDAPixelFormat.h>
 #include <C2VDASupport.h>  // to getParamReflector from vda store
 #include <C2VdaBqBlockPool.h>
 #include <C2VdaPooledBlockPool.h>
 
+#include <h264_parser.h>
+
 #include <C2AllocatorGralloc.h>
 #include <C2ComponentFactory.h>
 #include <C2PlatformSupport.h>
+#include <Codec2Mapper.h>
 
 #include <base/bind.h>
 #include <base/bind_helpers.h>
 
 #include <media/stagefright/MediaDefs.h>
+#include <media/stagefright/foundation/ColorUtils.h>
 #include <utils/Log.h>
 #include <utils/misc.h>
 
@@ -90,22 +93,115 @@ static c2_status_t adaptorResultToC2Status(VideoDecodeAcceleratorAdaptor::Result
     }
 }
 
+// static
+C2R C2VDAComponent::IntfImpl::ProfileLevelSetter(bool mayBlock,
+                                                 C2P<C2StreamProfileLevelInfo::input>& info) {
+    (void)mayBlock;
+    return info.F(info.v.profile)
+            .validatePossible(info.v.profile)
+            .plus(info.F(info.v.level).validatePossible(info.v.level));
+}
+
+// static
+C2R C2VDAComponent::IntfImpl::SizeSetter(bool mayBlock,
+                                         C2P<C2StreamPictureSizeInfo::output>& videoSize) {
+    (void)mayBlock;
+    // TODO: maybe apply block limit?
+    return videoSize.F(videoSize.v.width)
+            .validatePossible(videoSize.v.width)
+            .plus(videoSize.F(videoSize.v.height).validatePossible(videoSize.v.height));
+}
+
+// static
+template <typename T>
+C2R C2VDAComponent::IntfImpl::DefaultColorAspectsSetter(bool mayBlock, C2P<T>& def) {
+    (void)mayBlock;
+    if (def.v.range > C2Color::RANGE_OTHER) {
+        def.set().range = C2Color::RANGE_OTHER;
+    }
+    if (def.v.primaries > C2Color::PRIMARIES_OTHER) {
+        def.set().primaries = C2Color::PRIMARIES_OTHER;
+    }
+    if (def.v.transfer > C2Color::TRANSFER_OTHER) {
+        def.set().transfer = C2Color::TRANSFER_OTHER;
+    }
+    if (def.v.matrix > C2Color::MATRIX_OTHER) {
+        def.set().matrix = C2Color::MATRIX_OTHER;
+    }
+    return C2R::Ok();
+}
+
+// static
+C2R C2VDAComponent::IntfImpl::MergedColorAspectsSetter(
+        bool mayBlock, C2P<C2StreamColorAspectsInfo::output>& merged,
+        const C2P<C2StreamColorAspectsTuning::output>& def,
+        const C2P<C2StreamColorAspectsInfo::input>& coded) {
+    (void)mayBlock;
+    // Take coded values for all specified fields, and default values for unspecified ones.
+    merged.set().range = coded.v.range == RANGE_UNSPECIFIED ? def.v.range : coded.v.range;
+    merged.set().primaries =
+            coded.v.primaries == PRIMARIES_UNSPECIFIED ? def.v.primaries : coded.v.primaries;
+    merged.set().transfer =
+            coded.v.transfer == TRANSFER_UNSPECIFIED ? def.v.transfer : coded.v.transfer;
+    merged.set().matrix = coded.v.matrix == MATRIX_UNSPECIFIED ? def.v.matrix : coded.v.matrix;
+    return C2R::Ok();
+}
+
 C2VDAComponent::IntfImpl::IntfImpl(C2String name, const std::shared_ptr<C2ReflectorHelper>& helper)
       : C2InterfaceHelper(helper), mInitStatus(C2_OK) {
     setDerivedInstance(this);
 
     // TODO(johnylin): use factory function to determine whether V4L2 stream or slice API is.
-    InputCodec inputCodec;
     char inputMime[128];
     if (name == kH264DecoderName || name == kH264SecureDecoderName) {
         strcpy(inputMime, MEDIA_MIMETYPE_VIDEO_AVC);
-        inputCodec = InputCodec::H264;
+        mInputCodec = InputCodec::H264;
+        addParameter(
+                DefineParam(mProfileLevel, C2_PARAMKEY_PROFILE_LEVEL)
+                        .withDefault(new C2StreamProfileLevelInfo::input(
+                                0u, C2Config::PROFILE_AVC_MAIN, C2Config::LEVEL_AVC_4))
+                        .withFields(
+                                {C2F(mProfileLevel, profile)
+                                         .oneOf({C2Config::PROFILE_AVC_BASELINE,
+                                                 C2Config::PROFILE_AVC_CONSTRAINED_BASELINE,
+                                                 C2Config::PROFILE_AVC_MAIN,
+                                                 C2Config::PROFILE_AVC_HIGH,
+                                                 C2Config::PROFILE_AVC_CONSTRAINED_HIGH}),
+                                 C2F(mProfileLevel, level)
+                                         .oneOf({C2Config::LEVEL_AVC_1, C2Config::LEVEL_AVC_1B,
+                                                 C2Config::LEVEL_AVC_1_1, C2Config::LEVEL_AVC_1_2,
+                                                 C2Config::LEVEL_AVC_1_3, C2Config::LEVEL_AVC_2,
+                                                 C2Config::LEVEL_AVC_2_1, C2Config::LEVEL_AVC_2_2,
+                                                 C2Config::LEVEL_AVC_3, C2Config::LEVEL_AVC_3_1,
+                                                 C2Config::LEVEL_AVC_3_2, C2Config::LEVEL_AVC_4,
+                                                 C2Config::LEVEL_AVC_4_1, C2Config::LEVEL_AVC_4_2,
+                                                 C2Config::LEVEL_AVC_5, C2Config::LEVEL_AVC_5_1,
+                                                 C2Config::LEVEL_AVC_5_2})})
+                        .withSetter(ProfileLevelSetter)
+                        .build());
     } else if (name == kVP8DecoderName || name == kVP8SecureDecoderName) {
         strcpy(inputMime, MEDIA_MIMETYPE_VIDEO_VP8);
-        inputCodec = InputCodec::VP8;
+        mInputCodec = InputCodec::VP8;
+        addParameter(DefineParam(mProfileLevel, C2_PARAMKEY_PROFILE_LEVEL)
+                             .withConstValue(new C2StreamProfileLevelInfo::input(
+                                     0u, C2Config::PROFILE_UNUSED, C2Config::LEVEL_UNUSED))
+                             .build());
     } else if (name == kVP9DecoderName || name == kVP9SecureDecoderName) {
         strcpy(inputMime, MEDIA_MIMETYPE_VIDEO_VP9);
-        inputCodec = InputCodec::VP9;
+        mInputCodec = InputCodec::VP9;
+        addParameter(
+                DefineParam(mProfileLevel, C2_PARAMKEY_PROFILE_LEVEL)
+                        .withDefault(new C2StreamProfileLevelInfo::input(
+                                0u, C2Config::PROFILE_VP9_0, C2Config::LEVEL_VP9_5))
+                        .withFields({C2F(mProfileLevel, profile).oneOf({C2Config::PROFILE_VP9_0}),
+                                     C2F(mProfileLevel, level)
+                                             .oneOf({C2Config::LEVEL_VP9_1, C2Config::LEVEL_VP9_1_1,
+                                                     C2Config::LEVEL_VP9_2, C2Config::LEVEL_VP9_2_1,
+                                                     C2Config::LEVEL_VP9_3, C2Config::LEVEL_VP9_3_1,
+                                                     C2Config::LEVEL_VP9_4, C2Config::LEVEL_VP9_4_1,
+                                                     C2Config::LEVEL_VP9_5})})
+                        .withSetter(ProfileLevelSetter)
+                        .build());
     } else {
         ALOGE("Invalid component name: %s", name.c_str());
         mInitStatus = C2_BAD_VALUE;
@@ -116,12 +212,12 @@ C2VDAComponent::IntfImpl::IntfImpl(C2String name, const std::shared_ptr<C2Reflec
     //       ARC++.
     media::VideoDecodeAccelerator::SupportedProfiles supportedProfiles;
 #ifdef V4L2_CODEC2_ARC
-    supportedProfiles = arc::C2VDAAdaptorProxy::GetSupportedProfiles(inputCodec);
+    supportedProfiles = arc::C2VDAAdaptorProxy::GetSupportedProfiles(mInputCodec);
 #else
-    supportedProfiles = C2VDAAdaptor::GetSupportedProfiles(inputCodec);
+    supportedProfiles = C2VDAAdaptor::GetSupportedProfiles(mInputCodec);
 #endif
     if (supportedProfiles.empty()) {
-        ALOGE("No supported profile from input codec: %d", inputCodec);
+        ALOGE("No supported profile from input codec: %d", mInputCodec);
         mInitStatus = C2_BAD_VALUE;
         return;
     }
@@ -150,23 +246,42 @@ C2VDAComponent::IntfImpl::IntfImpl(C2String name, const std::shared_ptr<C2Reflec
                                  MEDIA_MIMETYPE_VIDEO_RAW))
                          .build());
 
-    struct LocalSetter {
-        static C2R SizeSetter(bool mayBlock, C2P<C2StreamPictureSizeInfo::output>& videoSize) {
-            (void)mayBlock;
-            // TODO: maybe apply block limit?
-            return videoSize.F(videoSize.v.width)
-                    .validatePossible(videoSize.v.width)
-                    .plus(videoSize.F(videoSize.v.height).validatePossible(videoSize.v.height));
-        }
-    };
-
     addParameter(DefineParam(mSize, C2_PARAMKEY_STREAM_PICTURE_SIZE)
                          .withDefault(new C2StreamPictureSizeInfo::output(0u, 176, 144))
                          .withFields({
                                  C2F(mSize, width).inRange(minSize.width(), maxSize.width(), 16),
                                  C2F(mSize, height).inRange(minSize.height(), maxSize.height(), 16),
                          })
-                         .withSetter(LocalSetter::SizeSetter)
+                         .withSetter(SizeSetter)
+                         .build());
+
+    // App may set a smaller value for maximum of input buffer size than actually required
+    // by mistake. C2VDAComponent overrides it if the value specified by app is smaller than
+    // the calculated value in MaxSizeCalculator().
+    // This value is the default maximum of linear buffer size (kLinearBufferSize) in
+    // CCodecBufferChannel.cpp.
+    constexpr static size_t kLinearBufferSize = 1048576;
+    struct LocalCalculator {
+        static C2R MaxSizeCalculator(bool mayBlock, C2P<C2StreamMaxBufferSizeInfo::input>& me,
+                                     const C2P<C2StreamPictureSizeInfo::output>& size) {
+            (void)mayBlock;
+            // TODO: Need larger size?
+            me.set().value = kLinearBufferSize;
+            const uint32_t width = size.v.width;
+            const uint32_t height = size.v.height;
+            // Enlarge the input buffer for 4k video
+            if ((width > 1920 && height > 1080)) {
+                me.set().value = 4 * kLinearBufferSize;
+            }
+            return C2R::Ok();
+        }
+    };
+    addParameter(DefineParam(mMaxInputSize, C2_PARAMKEY_INPUT_MAX_BUFFER_SIZE)
+                         .withDefault(new C2StreamMaxBufferSizeInfo::input(0u, kLinearBufferSize))
+                         .withFields({
+                                 C2F(mMaxInputSize, value).any(),
+                         })
+                         .calculatedAs(LocalCalculator::MaxSizeCalculator, mSize)
                          .build());
 
     bool secureMode = name.find(".secure") != std::string::npos;
@@ -201,6 +316,63 @@ C2VDAComponent::IntfImpl::IntfImpl(C2String name, const std::shared_ptr<C2Reflec
                                  C2F(mOutputBlockPoolIds, m.values).inRange(0, 1)})
                     .withSetter(Setter<C2PortBlockPoolsTuning::output>::NonStrictValuesWithNoDeps)
                     .build());
+
+    addParameter(
+            DefineParam(mDefaultColorAspects, C2_PARAMKEY_DEFAULT_COLOR_ASPECTS)
+                    .withDefault(new C2StreamColorAspectsTuning::output(
+                            0u, C2Color::RANGE_UNSPECIFIED, C2Color::PRIMARIES_UNSPECIFIED,
+                            C2Color::TRANSFER_UNSPECIFIED, C2Color::MATRIX_UNSPECIFIED))
+                    .withFields(
+                            {C2F(mDefaultColorAspects, range)
+                                     .inRange(C2Color::RANGE_UNSPECIFIED, C2Color::RANGE_OTHER),
+                             C2F(mDefaultColorAspects, primaries)
+                                     .inRange(C2Color::PRIMARIES_UNSPECIFIED,
+                                              C2Color::PRIMARIES_OTHER),
+                             C2F(mDefaultColorAspects, transfer)
+                                     .inRange(C2Color::TRANSFER_UNSPECIFIED,
+                                              C2Color::TRANSFER_OTHER),
+                             C2F(mDefaultColorAspects, matrix)
+                                     .inRange(C2Color::MATRIX_UNSPECIFIED, C2Color::MATRIX_OTHER)})
+                    .withSetter(DefaultColorAspectsSetter)
+                    .build());
+
+    addParameter(
+            DefineParam(mCodedColorAspects, C2_PARAMKEY_VUI_COLOR_ASPECTS)
+                    .withDefault(new C2StreamColorAspectsInfo::input(
+                            0u, C2Color::RANGE_LIMITED, C2Color::PRIMARIES_UNSPECIFIED,
+                            C2Color::TRANSFER_UNSPECIFIED, C2Color::MATRIX_UNSPECIFIED))
+                    .withFields(
+                            {C2F(mCodedColorAspects, range)
+                                     .inRange(C2Color::RANGE_UNSPECIFIED, C2Color::RANGE_OTHER),
+                             C2F(mCodedColorAspects, primaries)
+                                     .inRange(C2Color::PRIMARIES_UNSPECIFIED,
+                                              C2Color::PRIMARIES_OTHER),
+                             C2F(mCodedColorAspects, transfer)
+                                     .inRange(C2Color::TRANSFER_UNSPECIFIED,
+                                              C2Color::TRANSFER_OTHER),
+                             C2F(mCodedColorAspects, matrix)
+                                     .inRange(C2Color::MATRIX_UNSPECIFIED, C2Color::MATRIX_OTHER)})
+                    .withSetter(DefaultColorAspectsSetter)
+                    .build());
+
+    addParameter(
+            DefineParam(mColorAspects, C2_PARAMKEY_COLOR_ASPECTS)
+                    .withDefault(new C2StreamColorAspectsInfo::output(
+                            0u, C2Color::RANGE_UNSPECIFIED, C2Color::PRIMARIES_UNSPECIFIED,
+                            C2Color::TRANSFER_UNSPECIFIED, C2Color::MATRIX_UNSPECIFIED))
+                    .withFields(
+                            {C2F(mColorAspects, range)
+                                     .inRange(C2Color::RANGE_UNSPECIFIED, C2Color::RANGE_OTHER),
+                             C2F(mColorAspects, primaries)
+                                     .inRange(C2Color::PRIMARIES_UNSPECIFIED,
+                                              C2Color::PRIMARIES_OTHER),
+                             C2F(mColorAspects, transfer)
+                                     .inRange(C2Color::TRANSFER_UNSPECIFIED,
+                                              C2Color::TRANSFER_OTHER),
+                             C2F(mColorAspects, matrix)
+                                     .inRange(C2Color::MATRIX_UNSPECIFIED, C2Color::MATRIX_OTHER)})
+                    .withSetter(MergedColorAspectsSetter, mDefaultColorAspects, mCodedColorAspects)
+                    .build());
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -232,6 +404,8 @@ C2VDAComponent::C2VDAComponent(C2String name, c2_node_id_t id,
         mVDAInitResult(VideoDecodeAcceleratorAdaptor::Result::ILLEGAL_STATE),
         mComponentState(ComponentState::UNINITIALIZED),
         mPendingOutputEOS(false),
+        mPendingColorAspectsChange(false),
+        mPendingColorAspectsChangeFrameIndex(0),
         mCodecProfile(media::VIDEO_CODEC_PROFILE_UNKNOWN),
         mState(State::UNLOADED),
         mWeakThisFactory(this) {
@@ -284,6 +458,12 @@ void C2VDAComponent::onStart(media::VideoCodecProfile profile, ::base::WaitableE
     mVDAInitResult = mVDAAdaptor->initialize(profile, mSecureMode, this);
     if (mVDAInitResult == VideoDecodeAcceleratorAdaptor::Result::SUCCESS) {
         mComponentState = ComponentState::STARTED;
+    }
+
+    if (!mSecureMode && mIntfImpl->getInputCodec() == InputCodec::H264) {
+        // Get default color aspects on start.
+        updateColorAspects();
+        mPendingColorAspectsChange = false;
     }
 
     done->Signal();
@@ -340,6 +520,20 @@ void C2VDAComponent::onDequeueWork() {
         // If input.buffers is not empty, the buffer should have meaningful content inside.
         C2ConstLinearBlock linearBlock = work->input.buffers.front()->data().linearBlocks().front();
         CHECK_GT(linearBlock.size(), 0u);
+
+        // Call parseCodedColorAspects() to try to parse color aspects from bitstream only if:
+        // 1) This is non-secure decoding.
+        // 2) This is H264 codec.
+        // 3) This input is CSD buffer (with flags FLAG_CODEC_CONFIG).
+        if (!mSecureMode && (mIntfImpl->getInputCodec() == InputCodec::H264) &&
+            (work->input.flags & C2FrameData::FLAG_CODEC_CONFIG)) {
+            if (parseCodedColorAspects(linearBlock)) {
+                // Record current frame index, color aspects should be updated only for output
+                // buffers whose frame indices are not less than this one.
+                mPendingColorAspectsChange = true;
+                mPendingColorAspectsChangeFrameIndex = work->input.ordinal.frameIndex.peeku();
+            }
+        }
         // Send input buffer to VDA for decode.
         // Use frameIndex as bitstreamId.
         int32_t bitstreamId = frameIndexToBitstreamId(work->input.ordinal.frameIndex);
@@ -442,8 +636,17 @@ void C2VDAComponent::onOutputBufferDone(int32_t pictureBufferId, int32_t bitstre
             C2Rect(mOutputFormat.mVisibleRect.width(), mOutputFormat.mVisibleRect.height()),
             C2Fence());
     MarkBlockPoolDataAsShared(constBlock);
-    work->worklets.front()->output.buffers.emplace_back(
-            C2Buffer::CreateGraphicBuffer(std::move(constBlock)));
+
+    std::shared_ptr<C2Buffer> buffer = C2Buffer::CreateGraphicBuffer(std::move(constBlock));
+    if (mPendingColorAspectsChange &&
+        work->input.ordinal.frameIndex.peeku() >= mPendingColorAspectsChangeFrameIndex) {
+        updateColorAspects();
+        mPendingColorAspectsChange = false;
+    }
+    if (mCurrentColorAspects) {
+        buffer->setInfo(mCurrentColorAspects);
+    }
+    work->worklets.front()->output.buffers.emplace_back(std::move(buffer));
     info->mGraphicBlock.reset();
 
     reportFinishedWorkIfAny();
@@ -809,7 +1012,8 @@ c2_status_t C2VDAComponent::allocateBuffersFromBlockAllocator(const media::Size&
     }
     mOutputFormat.mMinNumBuffers = bufferCount;
 
-    if (!startDequeueThread(size, pixelFormat, std::move(blockPool))) {
+    if (!startDequeueThread(size, pixelFormat, std::move(blockPool),
+                            true /* resetBuffersInClient */)) {
         reportError(C2_CORRUPTED);
         return C2_CORRUPTED;
     }
@@ -932,6 +1136,88 @@ void C2VDAComponent::sendOutputBufferToAccelerator(GraphicBlockInfo* info) {
     }
 }
 
+bool C2VDAComponent::parseCodedColorAspects(const C2ConstLinearBlock& input) {
+    C2ReadView view = input.map().get();
+    const uint8_t* data = view.data();
+    const uint32_t size = view.capacity();
+
+    std::unique_ptr<media::H264Parser> h264Parser = std::make_unique<media::H264Parser>();
+    h264Parser->SetStream(data, static_cast<off_t>(size));
+    media::H264NALU nalu;
+    media::H264Parser::Result parRes = h264Parser->AdvanceToNextNALU(&nalu);
+    if (parRes != media::H264Parser::kEOStream && parRes != media::H264Parser::kOk) {
+        ALOGE("H264 AdvanceToNextNALU error: %d", static_cast<int>(parRes));
+        return false;
+    }
+    if (nalu.nal_unit_type != media::H264NALU::kSPS) {
+        ALOGV("NALU is not SPS");
+        return false;
+    }
+
+    int spsId;
+    parRes = h264Parser->ParseSPS(&spsId);
+    if (parRes != media::H264Parser::kEOStream && parRes != media::H264Parser::kOk) {
+        ALOGE("H264 ParseSPS error: %d", static_cast<int>(parRes));
+        return false;
+    }
+
+    // Parse ISO color aspects from H264 SPS bitstream.
+    const media::H264SPS* sps = h264Parser->GetSPS(spsId);
+    if (!sps->colour_description_present_flag) {
+        ALOGV("No Color Description in SPS");
+        return false;
+    }
+    int32_t primaries = sps->colour_primaries;
+    int32_t transfer = sps->transfer_characteristics;
+    int32_t coeffs = sps->matrix_coefficients;
+    bool fullRange = sps->video_full_range_flag;
+
+    // Convert ISO color aspects to ColorUtils::ColorAspects.
+    ColorAspects colorAspects;
+    ColorUtils::convertIsoColorAspectsToCodecAspects(primaries, transfer, coeffs, fullRange,
+                                                     colorAspects);
+    ALOGV("Parsed ColorAspects from bitstream: (R:%d, P:%d, M:%d, T:%d)", colorAspects.mRange,
+          colorAspects.mPrimaries, colorAspects.mMatrixCoeffs, colorAspects.mTransfer);
+
+    // Map ColorUtils::ColorAspects to C2StreamColorAspectsInfo::input parameter.
+    C2StreamColorAspectsInfo::input codedAspects = {0u};
+    if (!C2Mapper::map(colorAspects.mPrimaries, &codedAspects.primaries)) {
+        codedAspects.primaries = C2Color::PRIMARIES_UNSPECIFIED;
+    }
+    if (!C2Mapper::map(colorAspects.mRange, &codedAspects.range)) {
+        codedAspects.range = C2Color::RANGE_UNSPECIFIED;
+    }
+    if (!C2Mapper::map(colorAspects.mMatrixCoeffs, &codedAspects.matrix)) {
+        codedAspects.matrix = C2Color::MATRIX_UNSPECIFIED;
+    }
+    if (!C2Mapper::map(colorAspects.mTransfer, &codedAspects.transfer)) {
+        codedAspects.transfer = C2Color::TRANSFER_UNSPECIFIED;
+    }
+    // Configure to interface.
+    std::vector<std::unique_ptr<C2SettingResult>> failures;
+    c2_status_t status = mIntfImpl->config({&codedAspects}, C2_MAY_BLOCK, &failures);
+    if (status != C2_OK) {
+        ALOGE("Failed to config color aspects to interface, error: %d", status);
+        return false;
+    }
+    return true;
+}
+
+c2_status_t C2VDAComponent::updateColorAspects() {
+    ALOGV("updateColorAspects");
+    std::unique_ptr<C2StreamColorAspectsInfo::output> colorAspects =
+            std::make_unique<C2StreamColorAspectsInfo::output>(
+                    0u, C2Color::RANGE_UNSPECIFIED, C2Color::PRIMARIES_UNSPECIFIED,
+                    C2Color::TRANSFER_UNSPECIFIED, C2Color::MATRIX_UNSPECIFIED);
+    c2_status_t status = mIntfImpl->query({colorAspects.get()}, {}, C2_DONT_BLOCK, nullptr);
+    if (status != C2_OK) {
+        ALOGE("Failed to query color aspects, error: %d", status);
+        return status;
+    }
+    mCurrentColorAspects = std::move(colorAspects);
+    return C2_OK;
+}
+
 void C2VDAComponent::onVisibleRectChanged(const media::Rect& cropRect) {
     DCHECK(mTaskRunner->BelongsToCurrentThread());
     ALOGV("onVisibleRectChanged");
@@ -948,6 +1234,77 @@ void C2VDAComponent::setOutputFormatCrop(const media::Rect& cropRect) {
     // This visible rect should be set as crop window for each C2ConstGraphicBlock passed to
     // framework.
     mOutputFormat.mVisibleRect = cropRect;
+}
+
+void C2VDAComponent::onSurfaceChanged() {
+    DCHECK(mTaskRunner->BelongsToCurrentThread());
+    ALOGV("onSurfaceChanged");
+
+    if (mComponentState == ComponentState::UNINITIALIZED) {
+        return;  // Component is already stopped, no need to update graphic blocks.
+    }
+
+    stopDequeueThread();
+
+    // Get block pool ID configured from the client.
+    std::shared_ptr<C2BlockPool> blockPool;
+    auto blockPoolId = mIntfImpl->getBlockPoolId();
+    ALOGI("Retrieving C2BlockPool ID = %" PRIu64 " for updating output buffers", blockPoolId);
+    auto err = GetCodec2BlockPool(blockPoolId, shared_from_this(), &blockPool);
+    if (err != C2_OK) {
+        ALOGE("Graphic block allocator is invalid");
+        reportError(err);
+        return;
+    }
+    if (blockPool->getAllocatorId() != C2PlatformAllocatorStore::BUFFERQUEUE) {
+        ALOGE("Only Bufferqueue-backed block pool would need to change surface.");
+        reportError(C2_CORRUPTED);
+        return;
+    }
+
+    std::shared_ptr<C2VdaBqBlockPool> bqPool =
+            std::static_pointer_cast<C2VdaBqBlockPool>(blockPool);
+    if (!bqPool) {
+        ALOGE("static_pointer_cast C2VdaBqBlockPool failed...");
+        reportError(C2_CORRUPTED);
+        return;
+    }
+
+    for (auto& info : mGraphicBlocks) {
+        bool willCancel = (info.mGraphicBlock == nullptr);
+        uint32_t oldSlot = info.mPoolId;
+        ALOGV("Updating graphic block #%d: slot = %u, willCancel = %d", info.mBlockId, oldSlot,
+              willCancel);
+        uint32_t newSlot;
+        std::shared_ptr<C2GraphicBlock> block;
+        err = bqPool->updateGraphicBlock(willCancel, oldSlot, &newSlot, &block);
+        if (err == C2_CANCELED) {
+            // There may be a chance that a task in task runner before onSurfaceChange triggers
+            // output format change. If so, block pool will return C2_CANCELED and no need to
+            // updateGraphicBlock anymore.
+            return;
+        }
+        if (err != C2_OK) {
+            ALOGE("failed to update graphic block from block pool: %d", err);
+            reportError(err);
+            return;
+        }
+
+        // Update slot index.
+        info.mPoolId = newSlot;
+        // Update C2GraphicBlock if |willCancel| is false. Note that although the old C2GraphicBlock
+        // will be released, the block pool data destructor won't do detachBuffer to new surface
+        // because the producer ID is not matched.
+        if (!willCancel) {
+            info.mGraphicBlock = std::move(block);
+        }
+    }
+
+    if (!startDequeueThread(mOutputFormat.mCodedSize,
+                            static_cast<uint32_t>(mOutputFormat.mPixelFormat), std::move(blockPool),
+                            false /* resetBuffersInClient */)) {
+        reportError(C2_CORRUPTED);
+    }
 }
 
 c2_status_t C2VDAComponent::queue_nb(std::list<std::unique_ptr<C2Work>>* const items) {
@@ -1225,14 +1582,17 @@ void C2VDAComponent::reportError(c2_status_t error) {
 }
 
 bool C2VDAComponent::startDequeueThread(const media::Size& size, uint32_t pixelFormat,
-                                        std::shared_ptr<C2BlockPool> blockPool) {
+                                        std::shared_ptr<C2BlockPool> blockPool,
+                                        bool resetBuffersInClient) {
     CHECK(!mDequeueThread.IsRunning());
     if (!mDequeueThread.Start()) {
         ALOGE("failed to start dequeue thread!!");
         return false;
     }
     mDequeueLoopStop.store(false);
-    mBuffersInClient.store(0u);
+    if (resetBuffersInClient) {
+        mBuffersInClient.store(0u);
+    }
     mDequeueThread.task_runner()->PostTask(
             FROM_HERE, ::base::Bind(&C2VDAComponent::dequeueThreadLoop, ::base::Unretained(this),
                                     size, pixelFormat, std::move(blockPool)));
@@ -1262,7 +1622,18 @@ void C2VDAComponent::dequeueThreadLoop(const media::Size& size, uint32_t pixelFo
         auto err = blockPool->fetchGraphicBlock(size.width(), size.height(), pixelFormat, usage,
                                                 &block);
         if (err == C2_TIMED_OUT) {
+            // Mutexes often do not care for FIFO. Practically the thread who is locking the mutex
+            // usually will be granted to lock again right thereafter. To make this loop not too
+            // bossy, the simpliest way is to add a short delay to the next time acquiring the
+            // lock. TODO (b/118354314): replace this if there is better solution.
+            ::usleep(1);
             continue;  // wait for retry
+        }
+        if (err == C2_BAD_STATE) {
+            ALOGV("Got informed from block pool surface is changed.");
+            mTaskRunner->PostTask(FROM_HERE, ::base::Bind(&C2VDAComponent::onSurfaceChanged,
+                                                          ::base::Unretained(this)));
+            break;  // terminate the loop, will be resumed after onSurfaceChanged().
         }
         if (err == C2_OK) {
             uint32_t poolId;
