@@ -163,8 +163,6 @@ private:
         // onStop() is called. VDA is shutting down. State will change to UNINITIALIZED after
         // onStopDone().
         STOPPING,
-        // onError() is called.
-        ERROR,
     };
 
     // This constant is used to tell apart from drain_mode_t enumerations in C2Component.h, which
@@ -269,19 +267,26 @@ private:
     // Dequeue |mPendingBuffersToWork| to put output buffer to corresponding work and report if
     // finished as many as possible. If |dropIfUnavailable|, drop all pending existing frames
     // without blocking.
-    void sendOutputBufferToWorkIfAny(bool dropIfUnavailable);
+    c2_status_t sendOutputBufferToWorkIfAny(bool dropIfUnavailable);
     // Update |mUndequeuedBlockIds| FIFO by pushing |blockId|.
     void updateUndequeuedBlockIds(int32_t blockId);
 
+    // Specific to VP8/VP9, since for no-show frame cases VDA will not call PictureReady to return
+    // output buffer which the corresponding work is waiting for, this function detects these works
+    // by comparing timestamps. If there are works with no-show frame, call reportWorkIfFinished()
+    // to report to listener if finished.
+    void detectNoShowFrameWorksAndReportIfFinished(const C2WorkOrdinalStruct* currOrdinal);
     // Check if the corresponding work is finished by |bitstreamId|. If yes, make onWorkDone call to
     // listener and erase the work from |mPendingWorks|.
     void reportWorkIfFinished(int32_t bitstreamId);
     // Make onWorkDone call to listener for reporting EOS work in |mPendingWorks|.
-    void reportEOSWork();
+    c2_status_t reportEOSWork();
     // Abandon all works in |mPendingWorks| and |mAbandonedWorks|.
     void reportAbandonedWorks();
     // Make onError call to listener for reporting errors.
     void reportError(c2_status_t error);
+    // Helper function to determine if the work indicates no-show output frame.
+    bool isNoShowFrameWork(const C2Work* work, const C2WorkOrdinalStruct* currOrdinal) const;
     // Helper function to determine if the work is finished.
     bool isWorkDone(const C2Work* work) const;
 
@@ -336,6 +341,7 @@ private:
     std::queue<WorkEntry> mQueue;
     // Store all pending works. The dequeued works are placed here until they are finished and then
     // sent out by onWorkDone call to listener.
+    // TODO: maybe use priority_queue instead.
     std::deque<std::unique_ptr<C2Work>> mPendingWorks;
     // Store all abandoned works. When component gets flushed/stopped, remaining works in queue are
     // dumped here and sent out by onWorkDone call to listener after flush/stop is finished.
@@ -364,6 +370,8 @@ private:
     // A FIFO queue to record the block IDs which are currently undequequed for display. The size
     // of this queue will be equal to the minimum number of undequeued buffers.
     std::deque<int32_t> mUndequeuedBlockIds;
+    // The error state indicator which sets to true when an error is occured.
+    bool mHasError = false;
 
     // The indicator of whether component is in secure mode.
     bool mSecureMode;
