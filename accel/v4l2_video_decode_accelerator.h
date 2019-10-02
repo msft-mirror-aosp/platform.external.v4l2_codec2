@@ -21,7 +21,6 @@
 
 #include "base/callback_forward.h"
 #include "base/macros.h"
-#include "base/memory/linked_ptr.h"
 #include "base/memory/ref_counted.h"
 #include "base/synchronization/waitable_event.h"
 #include "base/threading/thread.h"
@@ -31,8 +30,6 @@
 #include "video_decode_accelerator.h"
 
 namespace media {
-
-class H264Parser;
 
 // This class handles video accelerators directly through a V4L2 device exported
 // by the hardware blocks.
@@ -169,13 +166,11 @@ class V4L2VideoDecodeAccelerator
 
   // Record for input buffers.
   struct InputRecord {
-    InputRecord();
-    ~InputRecord();
-    bool at_device;    // held by device.
-    void* address;     // mmap() address.
-    size_t length;     // mmap() length.
-    off_t bytes_used;  // bytes filled in the mmap() segment.
-    int32_t input_id;  // triggering input_id as given to Decode().
+    bool at_device = false;   // held by device.
+    base::ScopedFD dmabuf_fd; // file descriptor that points the bitstream buffer.
+    size_t offset = 0;        // the offset of bitstream buffer on the buffer referred by |fd|.
+    size_t size = 0;          // the size of bitstream buffer.
+    int32_t input_id = -1;    // triggering input_id as given to Decode().
   };
 
   // Record for output buffers.
@@ -187,8 +182,10 @@ class V4L2VideoDecodeAccelerator
     int32_t picture_id;     // picture buffer id as returned to PictureReady().
     bool cleared;           // Whether the texture is cleared and safe to render
                             // from. See TextureManager for details.
-    // Output fds of the processor. Used only when OutputMode is IMPORT.
-    std::vector<base::ScopedFD> processor_output_fds;
+    // Output fds of the decoded frame.
+    std::vector<base::ScopedFD> output_fds;
+    // offsets of each decoded frame from each fd in |output_fds|.
+    std::vector<size_t> offsets;
   };
 
   //
@@ -206,22 +203,16 @@ class V4L2VideoDecodeAccelerator
   // Decode from the buffers queued in decoder_input_queue_.  Calls
   // DecodeBufferInitial() or DecodeBufferContinue() as appropriate.
   void DecodeBufferTask();
-  // Advance to the next fragment that begins a frame.
-  bool AdvanceFrameFragment(const uint8_t* data, size_t size, size_t* endpos);
   // Schedule another DecodeBufferTask() if we're behind.
   void ScheduleDecodeBufferTaskIfNeeded();
 
   // Return true if we should continue to schedule DecodeBufferTask()s after
-  // completion.  Store the amount of input actually consumed in |endpos|.
-  bool DecodeBufferInitial(const void* data, size_t size, size_t* endpos);
-  bool DecodeBufferContinue(const void* data, size_t size);
+  // completion.
+  bool DecodeBufferInitial(BitstreamBufferRef* buffer);
+  bool DecodeBufferContinue(BitstreamBufferRef* buffer);
 
-  // Accumulate data for the next frame to decode.  May return false in
-  // non-error conditions; for example when pipeline is full and should be
-  // retried later.
-  bool AppendToInputFrame(const void* data, size_t size);
   // Flush data for one decoded frame.
-  bool FlushInputFrame();
+  bool TrySubmitInputFrame(BitstreamBufferRef* buffer);
 
   // Allocate V4L2 buffers and assign them to |buffers| provided by the client
   // via AssignPictureBuffers() on decoder thread.
@@ -231,6 +222,7 @@ class V4L2VideoDecodeAccelerator
   // OutputRecord associated with |picture_buffer_id|, taking ownership of the
   // file descriptors.
   void ImportBufferForPictureTask(int32_t picture_buffer_id,
+                                  std::vector<size_t> offsets,
                                   std::vector<base::ScopedFD> dmabuf_fds);
 
   // Service I/O on the V4L2 devices.  This task should only be scheduled from
@@ -402,8 +394,6 @@ class V4L2VideoDecodeAccelerator
   // queued afterwards.  For flushing or resetting the pipeline then, we will
   // delay these buffers until after the flush or reset completes.
   int decoder_delay_bitstream_buffer_id_;
-  // Input buffer we're presently filling.
-  int decoder_current_input_buffer_;
   // We track the number of buffer decode tasks we have scheduled, since each
   // task execution should complete one buffer.  If we fall behind (due to
   // resource backpressure, etc.), we'll have to schedule more to catch up.
@@ -426,12 +416,7 @@ class V4L2VideoDecodeAccelerator
   // picture buffers.
   bool reset_pending_;
   // Input queue for decoder_thread_: BitstreamBuffers in.
-  std::queue<linked_ptr<BitstreamBufferRef>> decoder_input_queue_;
-  // For H264 decode, hardware requires that we send it frame-sized chunks.
-  // We'll need to parse the stream.
-  std::unique_ptr<H264Parser> decoder_h264_parser_;
-  // Set if the decoder has a pending incomplete frame in an input buffer.
-  bool decoder_partial_frame_pending_;
+  std::queue<std::unique_ptr<BitstreamBufferRef>> decoder_input_queue_;
 
   //
   // Hardware state and associated queues.  Since decoder_thread_ services
@@ -453,6 +438,8 @@ class V4L2VideoDecodeAccelerator
   std::vector<int> free_input_buffers_;
   // Mapping of int index to input buffer record.
   std::vector<InputRecord> input_buffer_map_;
+  // The size of input buffer that bitstream buffer can be copied.
+  size_t input_buffer_size_;
 
   // Output buffer state.
   bool output_streamon_;

@@ -29,8 +29,10 @@
 #include <base/bind.h>
 #include <base/bind_helpers.h>
 
+#include <cutils/native_handle.h>
 #include <media/stagefright/MediaDefs.h>
 #include <media/stagefright/foundation/ColorUtils.h>
+#include <ui/GraphicBuffer.h>
 #include <utils/Log.h>
 #include <utils/misc.h>
 
@@ -51,6 +53,33 @@ namespace {
 // Mask against 30 bits to avoid (undefined) wraparound on signed integer.
 int32_t frameIndexToBitstreamId(c2_cntr64_t frameIndex) {
     return static_cast<int32_t>(frameIndex.peeku() & 0x3FFFFFFF);
+}
+
+// Get android_ycbcr by lockYCbCr() from block handle which uses usage without SW_READ/WRITE bits.
+android_ycbcr getGraphicBlockInfo(const C2GraphicBlock& block) {
+    uint32_t width, height, format, stride, igbp_slot, generation;
+    uint64_t usage, igbp_id;
+    android::_UnwrapNativeCodec2GrallocMetadata(block.handle(), &width, &height,
+                                                &format, &usage, &stride, &generation, &igbp_id,
+                                                &igbp_slot);
+    native_handle_t* grallocHandle = android::UnwrapNativeCodec2GrallocHandle(block.handle());
+    sp<GraphicBuffer> buf = new GraphicBuffer(grallocHandle, GraphicBuffer::CLONE_HANDLE, width,
+                                              height, format, 1, usage, stride);
+    native_handle_delete(grallocHandle);
+
+    android_ycbcr ycbcr = {};
+    constexpr uint32_t kNonSWLockUsage = 0;
+    int32_t status = buf->lockYCbCr(kNonSWLockUsage, &ycbcr);
+    if (status != OK)
+        ALOGE("lockYCbCr is failed: %d", (int) status);
+    buf->unlock();
+    return ycbcr;
+}
+
+// Get frame size (stride, height) of a buffer owned by |block|.
+media::Size getFrameSizeFromC2GraphicBlock(const C2GraphicBlock& block) {
+    android_ycbcr ycbcr = getGraphicBlockInfo(block);
+    return media::Size(ycbcr.ystride, block.height());
 }
 
 // Use basic graphic block pool/allocator as default.
@@ -1003,9 +1032,6 @@ c2_status_t C2VDAComponent::allocateBuffersFromBlockAllocator(const media::Size&
 
     size_t bufferCount = mOutputFormat.mMinNumBuffers + kDpbOutputBufferExtraCount;
 
-    // Allocate the output buffers.
-    mVDAAdaptor->assignPictureBuffers(bufferCount);
-
     // Get block pool ID configured from the client.
     std::shared_ptr<C2BlockPool> blockPool;
     auto poolId = mIntfImpl->getBlockPoolId();
@@ -1100,6 +1126,11 @@ c2_status_t C2VDAComponent::allocateBuffersFromBlockAllocator(const media::Size&
             reportError(err);
             return err;
         }
+
+        if (i == 0) {
+            // Allocate the output buffers.
+            mVDAAdaptor->assignPictureBuffers(bufferCount, getFrameSizeFromC2GraphicBlock(*block));
+        }
         if (mSecureMode) {
             appendSecureOutputBuffer(std::move(block), poolId);
         } else {
@@ -1122,43 +1153,39 @@ void C2VDAComponent::appendOutputBuffer(std::shared_ptr<C2GraphicBlock> block, u
     info.mGraphicBlock = std::move(block);
     info.mPoolId = poolId;
 
-    C2ConstGraphicBlock constBlock = info.mGraphicBlock->share(
-            C2Rect(info.mGraphicBlock->width(), info.mGraphicBlock->height()), C2Fence());
-
-    const C2GraphicView& view = constBlock.map().get();
-    const uint8_t* const* data = view.data();
-    CHECK_NE(data, nullptr);
-    const C2PlanarLayout& layout = view.layout();
-
     ALOGV("allocate graphic buffer: %p, id: %d, size: %dx%d", info.mGraphicBlock->handle(),
           info.mBlockId, info.mGraphicBlock->width(), info.mGraphicBlock->height());
 
-    // get offset from data pointers
-    uint32_t offsets[C2PlanarLayout::MAX_NUM_PLANES];
-    auto baseAddress = reinterpret_cast<intptr_t>(data[0]);
-    for (uint32_t i = 0; i < layout.numPlanes; ++i) {
-        auto planeAddress = reinterpret_cast<intptr_t>(data[i]);
-        offsets[i] = static_cast<uint32_t>(planeAddress - baseAddress);
-    }
+    auto ycbcr = getGraphicBlockInfo(*info.mGraphicBlock);
+    // lockYCbCr() stores offsets into the pointers
+    // if given usage does not contain SW_READ/WRITE bits.
+    std::vector<uint32_t> offsets = {
+            static_cast<uint32_t>(reinterpret_cast<uintptr_t>(ycbcr.y)),
+            static_cast<uint32_t>(reinterpret_cast<uintptr_t>(ycbcr.cb)),
+            static_cast<uint32_t>(reinterpret_cast<uintptr_t>(ycbcr.cr)),
+    };
+    std::vector<uint32_t> strides = {
+            static_cast<uint32_t>(ycbcr.ystride),
+            static_cast<uint32_t>(ycbcr.cstride),
+            static_cast<uint32_t>(ycbcr.cstride),
+    };
 
     bool crcb = false;
-    if (layout.numPlanes == 3 &&
-        offsets[C2PlanarLayout::PLANE_U] > offsets[C2PlanarLayout::PLANE_V]) {
-        // YCrCb format
+    if (offsets[C2PlanarLayout::PLANE_U] > offsets[C2PlanarLayout::PLANE_V]) {
         std::swap(offsets[C2PlanarLayout::PLANE_U], offsets[C2PlanarLayout::PLANE_V]);
         crcb = true;
     }
 
     bool semiplanar = false;
-    uint32_t passedNumPlanes = layout.numPlanes;
-    if (layout.planes[C2PlanarLayout::PLANE_U].colInc == 2) {  // chroma_step
-        // Semi-planar format
-        passedNumPlanes--;
+    if (ycbcr.chroma_step > offsets[C2PlanarLayout::PLANE_V] - offsets[C2PlanarLayout::PLANE_U]) {
+        offsets.pop_back();
+        strides.pop_back();
         semiplanar = true;
     }
 
-    for (uint32_t i = 0; i < passedNumPlanes; ++i) {
-        ALOGV("plane %u: stride: %d, offset: %u", i, layout.planes[i].rowInc, offsets[i]);
+    const uint32_t numPlanes = 3 - semiplanar;
+    for (uint32_t i = 0; i < numPlanes; ++i) {
+        ALOGV("plane %u: stride: %d, offset: %u", i, strides[i], offsets[i]);
     }
     info.mPixelFormat = resolveBufferFormat(crcb, semiplanar);
     ALOGV("HAL pixel format: 0x%x", static_cast<uint32_t>(info.mPixelFormat));
@@ -1176,9 +1203,9 @@ void C2VDAComponent::appendOutputBuffer(std::shared_ptr<C2GraphicBlock> block, u
     ALOGV("The number of fds of output buffer: %zu", fds.size());
 
     std::vector<VideoFramePlane> passedPlanes;
-    for (uint32_t i = 0; i < passedNumPlanes; ++i) {
-        CHECK_GT(layout.planes[i].rowInc, 0);
-        passedPlanes.push_back({offsets[i], static_cast<uint32_t>(layout.planes[i].rowInc)});
+    for (uint32_t i = 0; i < numPlanes; ++i) {
+        CHECK_GT(strides[i], 0u);
+        passedPlanes.push_back({offsets[i], strides[i]});
     }
     info.mHandles = std::move(fds);
     info.mPlanes = std::move(passedPlanes);
