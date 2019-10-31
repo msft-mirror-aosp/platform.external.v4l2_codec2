@@ -5,6 +5,7 @@
 #ifndef ANDROID_C2_VEA_COMPONENT_H
 #define ANDROID_C2_VEA_COMPONENT_H
 
+#include <C2VEAFormatConverter.h>
 #include <VideoEncodeAcceleratorAdaptor.h>
 
 #include <size.h>
@@ -204,14 +205,22 @@ private:
     std::deque<std::unique_ptr<C2Work>>::iterator findPendingWorkByIndex(uint64_t index);
     // Helper function to get the specified work in |mPendingWorks| by frame index.
     C2Work* getPendingWorkByIndex(uint64_t index);
+    // Helper function to get the specified work in |mPendingWorks| with the same |timestamp|.
+    // Note that EOS and CSD-holder work should be excluded because its timestmap is not meaningful.
+    C2Work* getPendingWorkByTimestamp(int64_t timestamp);
     // For VEA, the codec-specific data (CSD in abbreviation, SPS and PPS for H264 encode) will be
     // concatenated with the first encoded slice in one bitstream buffer. This function extracts CSD
     // out of the bitstream and stores into |csd|.
     void extractCSDInfo(std::unique_ptr<C2StreamCsdInfo::output>* const csd, const uint8_t* data,
                         size_t length);
+    // Helper function to determine if work queue is flushed. This is used to indicate that returned
+    // input or output buffer from VEA is no longer needed.
+    bool isFlushedState() const;
     // Check if the corresponding work is finished by |index|. If yes, make onWorkDone call to
     // listener and erase the work from |mPendingWorks|.
     void reportWorkIfFinished(uint64_t index);
+    // Report the work by onWorkDone call.
+    void reportWork(std::unique_ptr<C2Work> work);
     // Helper function to determine if the work is finished.
     bool isWorkDone(const C2Work* work) const;
     // Make onWorkDone call to listener for reporting EOS work in |mPendingWorks|.
@@ -269,21 +278,13 @@ private:
     // The current input will be marked as key frame when |mKeyFrameSerial| is 0.
     uint32_t mKeyFrameSerial = 0;
 
-    // Store the frame index of last dequeued works.
-    int64_t mLastDequeuedFrameIndex = -1;
-    // When onFlush() is called, assign as the value of |mLastDequeuedFrameIndex|. This is used to
-    // check if any VEA-returned input or output buffer later on could be neglected due to flush.
-    int64_t mLastFlushedFrameIndex = -1;
-    // Constants of states of CSD manipulation which will be used by |mCSDWorkIndex|.
-    constexpr static int64_t kCSDInit = -1;
-    constexpr static int64_t kCSDSubmitted = -2;
-    // Record the frame index of CSD-holder work, or indicate the state of CSD manipulation.
-    int64_t mCSDWorkIndex = kCSDInit;
+    // The indicator for extracting CSD info. Set to true once CSD info is extracted and submitted.
+    bool mCSDSubmitted = false;
     // The output block pool.
     std::shared_ptr<C2BlockPool> mOutputBlockPool;
-    // Store the mapping table for the allocated linear output block with respective frame index.
-    // Each newly-allocated output block will be stored here first, and moved to the corresponding
-    // work after the output buffer is returned from VEA.
+    // Store the mapping table for the allocated linear output block with corresponding index. Each
+    // newly-allocated output block will be stored here first, and moved to the corresponding work
+    // in respect of timestamp when the output buffer is returned from VEA.
     std::map<uint64_t, std::shared_ptr<C2LinearBlock>> mOutputBlockMap;
     // The indicator of draining with EOS. This should be always set along with component going to
     // DRAINING state, and will be unset either after reportEOSWork() (EOS is outputted), or
@@ -292,6 +293,9 @@ private:
     // Store all pending works. The dequeued works are placed here until they are finished and then
     // sent out by onWorkDone call to listener.
     std::deque<std::unique_ptr<C2Work>> mPendingWorks;
+    // If using format converter for input frames, this will be initialized for converting input
+    // frames to the default pixel format (onto the additional buffers) to send to VEA.
+    std::unique_ptr<C2VEAFormatConverter> mFormatConverter;
 
     // The following members should be utilized on parent thread.
 

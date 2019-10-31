@@ -80,9 +80,8 @@ public:
         virtual void notifyVideoFrameDone(uint64_t index) = 0;
 
         // Callback from useBitstreamBuffer() to deliver encoded bitstream buffers. Ownership of the
-        // buffer is transferred back to the client once this callback is called. |index| is
-        // correspondent to the one passed by useBitstreamBuffer(). |timestamp| is the same
-        // timestamp as the one passed by encode().
+        // buffer is transferred back to the client once this callback is called. |timestamp| is the
+        // same timestamp as the one passed by encode().
         virtual void bitstreamBufferReady(uint64_t index, uint32_t payloadSize, bool keyFrame,
                                           int64_t timestamp) = 0;
 

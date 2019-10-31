@@ -49,6 +49,8 @@ const C2BlockPool::local_id_t kDefaultOutputBlockPool = C2BlockPool::BASIC_LINEA
 const float kDefaultFrameRate = 30.0;
 // The default output bitrate in bits per second. Use the max bitrate of AVC Level1.0 as default.
 const uint32_t kDefaultBitrate = 64000;
+// The default pixel format of input frames.
+const media::VideoPixelFormat kInputPixelFormat = media::VideoPixelFormat::PIXEL_FORMAT_NV12;
 // The maximal output bitrate in bits per second. It's the max bitrate of AVC Level4.1.
 // TODO: increase this in the future for supporting higher level/resolution encoding.
 const uint32_t kMaxBitrate = 50000000;
@@ -169,6 +171,10 @@ uint8_t c2LevelToLevelIDC(C2Config::level_t level) {
         return 42;
     case LEVEL_AVC_5:
         return 50;
+    case LEVEL_AVC_5_1:
+        return 51;
+    case LEVEL_AVC_5_2:
+        return 52;
     default:
         ALOGE("Unrecognizable C2 level (value = 0x%x)...", level);
         return 0;
@@ -251,6 +257,8 @@ C2R C2VEAComponent::IntfImpl::ProfileLevelSetter(
         const C2P<C2StreamBitrateInfo::output>& bitrate) {
     (void)mayBlock;
 
+    static C2Config::level_t lowestConfigLevel = LEVEL_UNUSED;
+
     // Use at least PROFILE_AVC_MAIN as default for 1080p input video and up.
     // TODO (b/114332827): Find root cause of bad quality of Baseline encoding.
     C2Config::profile_t defaultMinProfile = PROFILE_AVC_BASELINE;
@@ -287,12 +295,19 @@ C2R C2VEAComponent::IntfImpl::ProfileLevelSetter(
             {LEVEL_AVC_3, 40500, 1620, 10000000},    {LEVEL_AVC_3_1, 108000, 3600, 14000000},
             {LEVEL_AVC_3_2, 216000, 5120, 20000000}, {LEVEL_AVC_4, 245760, 8192, 20000000},
             {LEVEL_AVC_4_1, 245760, 8192, 50000000}, {LEVEL_AVC_4_2, 522240, 8704, 50000000},
-            {LEVEL_AVC_5, 589824, 22080, 135000000},
+            {LEVEL_AVC_5, 589824, 22080, 135000000}, {LEVEL_AVC_5_1, 983040, 36864, 240000000},
+            {LEVEL_AVC_5_2, 2073600, 36864, 240000000},
     };
 
     uint64_t targetFS =
             static_cast<uint64_t>((videoSize.v.width + 15) / 16) * ((videoSize.v.height + 15) / 16);
     float targetMBPS = static_cast<float>(targetFS) * frameRate.v.value;
+
+    // Try the recorded lowest configed level. This level should become adaptable after input size,
+    // frame rate, and bitrate are all set.
+    if (lowestConfigLevel != LEVEL_UNUSED && lowestConfigLevel < info.v.level) {
+        info.set().level = lowestConfigLevel;
+    }
 
     // Check if the supplied level meets the requirements. If not, update the level with the lowest
     // level meeting the requirements.
@@ -321,6 +336,14 @@ C2R C2VEAComponent::IntfImpl::ProfileLevelSetter(
             // we haven't seen the supplied level yet, that means we don't
             // need the update.
             if (needsUpdate) {
+                // Since current config update is sequential, there is an issue when we want to set
+                // lower level for small input size, frame rate, and bitrate, if we set level first,
+                // it will be adjusted to a higher one because the default input size or others are
+                // above the limit. Use lowestConfigLevel to record the level we have tried to
+                // config (but failed).
+                // TODO(johnylin): remove this solution after b/140407694 has proper fix.
+                lowestConfigLevel = info.v.level;
+
                 ALOGD("Given level %u does not cover current configuration: "
                       "adjusting to %u",
                       info.v.level, limit.level);
@@ -452,7 +475,8 @@ C2VEAComponent::IntfImpl::IntfImpl(C2String name, const std::shared_ptr<C2Reflec
                                                  C2Config::LEVEL_AVC_2_1, C2Config::LEVEL_AVC_2_2,
                                                  C2Config::LEVEL_AVC_3, C2Config::LEVEL_AVC_3_1,
                                                  C2Config::LEVEL_AVC_3_2, C2Config::LEVEL_AVC_4,
-                                                 C2Config::LEVEL_AVC_4_1})})
+                                                 C2Config::LEVEL_AVC_4_1, C2Config::LEVEL_AVC_5,
+                                                 C2Config::LEVEL_AVC_5_1})})
                         .withSetter(ProfileLevelSetter, mInputVisibleSize, mFrameRate, mBitrate)
                         .build());
     } else {
@@ -534,10 +558,11 @@ uint32_t C2VEAComponent::IntfImpl::getKeyFramePeriod() const {
     return static_cast<uint32_t>(std::max(std::min(std::round(period), double(UINT32_MAX)), 1.));
 }
 
-#define EXPECT_RUNNING_OR_RETURN_ON_ERROR()                       \
-    do {                                                          \
-        if (mComponentState == ComponentState::ERROR) return;     \
-        CHECK_NE(mComponentState, ComponentState::UNINITIALIZED); \
+#define RETURN_ON_UNINITIALIZED_OR_ERROR()                    \
+    do {                                                      \
+        if (mComponentState == ComponentState::ERROR ||       \
+            mComponentState == ComponentState::UNINITIALIZED) \
+            return;                                           \
     } while (0)
 
 C2VEAComponent::C2VEAComponent(C2String name, c2_node_id_t id,
@@ -606,7 +631,7 @@ void C2VEAComponent::onQueueWork(std::unique_ptr<C2Work> work) {
     DCHECK(mTaskRunner->BelongsToCurrentThread());
     ALOGV("onQueueWork: flags=0x%x, index=%llu, timestamp=%llu", work->input.flags,
           work->input.ordinal.frameIndex.peekull(), work->input.ordinal.timestamp.peekull());
-    EXPECT_RUNNING_OR_RETURN_ON_ERROR();
+    RETURN_ON_UNINITIALIZED_OR_ERROR();
 
     uint32_t drainMode = NO_DRAIN;
     if (work->input.flags & C2FrameData::FLAG_END_OF_STREAM) {
@@ -621,12 +646,22 @@ void C2VEAComponent::onQueueWork(std::unique_ptr<C2Work> work) {
 void C2VEAComponent::onDequeueWork() {
     DCHECK(mTaskRunner->BelongsToCurrentThread());
     ALOGV("onDequeueWork");
-    EXPECT_RUNNING_OR_RETURN_ON_ERROR();
+    RETURN_ON_UNINITIALIZED_OR_ERROR();
     if (mQueue.empty()) {
         return;
     }
     if (mComponentState == ComponentState::DRAINING) {
         ALOGV("Temporarily stop dequeueing works since component is draining.");
+        return;
+    }
+    if (mComponentState == ComponentState::CONFIGURED) {
+        ALOGV("Component is still waiting for onRequireBitstreamBuffers() callback");
+        return;
+    }
+
+    if (!mQueue.front().mWork->input.buffers.empty() &&
+        mFormatConverter && !mFormatConverter->isReady()) {
+        ALOGV("There is no available block for conversion currently in format converter");
         return;
     }
 
@@ -678,17 +713,12 @@ void C2VEAComponent::onDequeueWork() {
         ALOGV("Got a work with no input buffer! Emplace a nullptr inside.");
         work->input.buffers.emplace_back(nullptr);
         if (drainMode == NO_DRAIN) {
-            if (mCSDWorkIndex == kCSDInit) {
-                // WORKAROUND from CCodecBufferChannel:
-                // An empty buffer is queued prior to any input buffer works to get the CSD info.
-                mCSDWorkIndex = static_cast<int64_t>(index);
-            } else {
-                // Despite the WORKAROUND, client should not queue a work with no input buffer
-                // except for EOS (drainMode != NO_DRAIN).
-                ALOGE("Got an illegal empty input work, which is not CSD holder nor EOS.");
-                reportError(C2_CORRUPTED);
-                return;
-            }
+            // WORKAROUND from CCodecBufferChannel:
+            // A work with no input buffer will be queued for obtaining CSD info because some apps
+            // expect CSD available without queueing any input. This is not supported by VEA, we
+            // just simply return this work.
+            reportWork(std::move(work));
+            return;
         }
     } else {
         // If input.buffers is not empty, the buffer should have meaningful content inside.
@@ -696,8 +726,21 @@ void C2VEAComponent::onDequeueWork() {
                 work->input.buffers.front()->data().graphicBlocks().front();
         bool force_keyframe = (mKeyFrameSerial++ % mKeyFramePeriod) == 0;
 
-        // Send input buffer to VEA for encode.
-        sendInputBufferToAccelerator(inputBlock, index, timestamp, force_keyframe);
+        if (mFormatConverter) {
+            status = C2_CORRUPTED;
+            C2ConstGraphicBlock convertedBlock =
+                    mFormatConverter->convertBlock(index, inputBlock, &status);
+            if (status != C2_OK) {
+                reportError(status);
+                return;
+            }
+            // Send format-converted input buffer to VEA for encode. |convertedBlock| will be the
+            // same as |inputBlock| if zero-copy is applied.
+            sendInputBufferToAccelerator(convertedBlock, index, timestamp, force_keyframe);
+        } else {
+            // Send input buffer to VEA for encode.
+            sendInputBufferToAccelerator(inputBlock, index, timestamp, force_keyframe);
+        }
 
         if (!mOutputBlockPool) {
             // Get block pool of block pool ID configured from the client.
@@ -729,12 +772,20 @@ void C2VEAComponent::onDequeueWork() {
             reportError(C2_CORRUPTED);
             return;
         }
-        mVEAAdaptor->useBitstreamBuffer(index, std::move(dupFd), outputBlock->offset(),
-                                        outputBlock->size());
-        mOutputBlockMap[index] = std::move(outputBlock);
-    }
 
-    mLastDequeuedFrameIndex = static_cast<int64_t>(index);
+        // Note that |bufferIndex| has different meaning than |index|. It is just an identification
+        // for the output block which will be used on BitstreamBufferReady callback. We leverage the
+        // value from |index| because |index| is guaranteed to be unique.
+        uint64_t bufferIndex = index;
+        mVEAAdaptor->useBitstreamBuffer(bufferIndex, std::move(dupFd), outputBlock->offset(),
+                                        outputBlock->size());
+        if (mOutputBlockMap.find(bufferIndex) != mOutputBlockMap.end()) {
+            ALOGE("Buffer index: %" PRIu64 " already exists in output block map", bufferIndex);
+            reportError(C2_CORRUPTED);
+            return;
+        }
+        mOutputBlockMap[bufferIndex] = std::move(outputBlock);
+    }
 
     if (drainMode != NO_DRAIN) {
         mVEAAdaptor->flush();
@@ -831,9 +882,7 @@ void C2VEAComponent::sendInputBufferToAccelerator(const C2ConstGraphicBlock& inp
         for (uint32_t i = 0; i < passedPlaneNum; ++i) {
             ALOGV("plane %u: stride: %d, offset: %u", i, strides[i], offsets[i]);
         }
-        // TODO(johnylin): use VideoPixelFormatToString() to print readable format after
-        //                 ported chromium code updated.
-        ALOGV("HAL pixel format: 0x%x", static_cast<uint32_t>(format));
+        ALOGV("HAL pixel format: %s", media::VideoPixelFormatToString(format).c_str());
     }
 
     std::vector<VideoFramePlane> passedPlanes;
@@ -853,13 +902,26 @@ void C2VEAComponent::sendInputBufferToAccelerator(const C2ConstGraphicBlock& inp
                         keyframe);
 }
 
+bool C2VEAComponent::isFlushedState() const {
+    // There are two situations for encoder to perform flush:
+    // 1. Flush by stop: while stop() is called, all pending works should be flushed and VEAAdaptor
+    //                   should be released. After onStop() is finished, the component state will
+    //                   be UNINITIALIZED until next start() call.
+    // 2. Flush by flush: while flush() is called, all pending works should be flushed. VEAAdaptor
+    //                    should be re-created and re-initialized, which means the component state
+    //                    will be CONFIGURED until RequireBitstreamBuffers callback.
+    return mComponentState == ComponentState::UNINITIALIZED ||
+            mComponentState == ComponentState::CONFIGURED;
+}
+
 void C2VEAComponent::onInputBufferDone(uint64_t index) {
     DCHECK(mTaskRunner->BelongsToCurrentThread());
     ALOGV("onInputBufferDone: index=%" PRIu64 "", index);
-    EXPECT_RUNNING_OR_RETURN_ON_ERROR();
-
-    if (static_cast<int64_t>(index) <= mLastFlushedFrameIndex) {
-        ALOGV("Work is already flushed, just neglect this output.");
+    if (mComponentState == ComponentState::ERROR) {
+        return;
+    }
+    if (isFlushedState()) {
+        ALOGV("Work is already flushed, just neglect this input.");
         return;
     }
 
@@ -873,6 +935,25 @@ void C2VEAComponent::onInputBufferDone(uint64_t index) {
     work->input.buffers.front().reset();
 
     reportWorkIfFinished(index);
+
+    if (!mFormatConverter) {
+        return;
+    }
+
+    bool previouslyOutOfBlock = !mFormatConverter->isReady();
+    c2_status_t status = mFormatConverter->returnBlock(index);
+    if (status != C2_OK) {
+        reportError(status);
+        return;
+    }
+
+    // Work dequeueing was temporarily blocked due to no available block for conversion in
+    // |mFormatConverter| until this function is called (one will be returned). Restart to dequeue
+    // work if there is still work queued.
+    if (previouslyOutOfBlock && !mQueue.empty()) {
+        mTaskRunner->PostTask(
+                FROM_HERE, ::base::Bind(&C2VEAComponent::onDequeueWork, ::base::Unretained(this)));
+    }
 }
 
 void C2VEAComponent::onOutputBufferDone(uint64_t index, uint32_t payloadSize, bool keyFrame,
@@ -880,48 +961,42 @@ void C2VEAComponent::onOutputBufferDone(uint64_t index, uint32_t payloadSize, bo
     DCHECK(mTaskRunner->BelongsToCurrentThread());
     ALOGV("onOutputBufferDone: index=%" PRIu64 ", payload=%u, key_frame=%d, timestamp=%" PRId64 "",
           index, payloadSize, keyFrame, timestamp);
-    EXPECT_RUNNING_OR_RETURN_ON_ERROR();
-
-    if (static_cast<int64_t>(index) <= mLastFlushedFrameIndex) {
+    if (mComponentState == ComponentState::ERROR) {
+        return;
+    }
+    if (isFlushedState()) {
         ALOGV("Work is already flushed, just neglect this output.");
         return;
     }
 
     auto blockIter = mOutputBlockMap.find(index);
     if (blockIter == mOutputBlockMap.end()) {
-        ALOGE("Cannot find corresponding output block by index: %" PRIu64 "", index);
+        ALOGE("Cannot find corresponding output block by buffer index: %" PRIu64 "", index);
         reportError(C2_CORRUPTED);
         return;
     }
 
-    C2Work* work = getPendingWorkByIndex(index);
+    C2ConstLinearBlock constBlock =
+            blockIter->second->share(blockIter->second->offset(), payloadSize, C2Fence());
+
+    // Get the work with corresponding timestamp of returned output buffer.
+    C2Work* work = getPendingWorkByTimestamp(timestamp);
     if (!work) {
         reportError(C2_CORRUPTED);
         return;
     }
 
-    // Attach output linear buffer to the work corresponded to index.
-    C2ConstLinearBlock constBlock =
-            blockIter->second->share(blockIter->second->offset(), payloadSize, C2Fence());
-    if (mCSDWorkIndex >= 0) {
-        C2ReadView view = constBlock.map().get();
+    if (!mCSDSubmitted) {
+        // Extract CSD info and put into the corresponding work.
         std::unique_ptr<C2StreamCsdInfo::output> csd;
+        C2ReadView view = constBlock.map().get();
         extractCSDInfo(&csd, view.data(), view.capacity());
         if (!csd) {
             reportError(C2_CORRUPTED);
             return;
         }
-
-        // Attach CSD info to the work whose index is |mCSDWorkIndex| and report.
-        C2Work* csdWork = getPendingWorkByIndex(mCSDWorkIndex);
-        if (!csdWork) {
-            ALOGE("Cannot get CSD pending work by index: %" PRId64 "", mCSDWorkIndex);
-            reportError(C2_CORRUPTED);
-            return;
-        }
-        csdWork->worklets.front()->output.configUpdate.push_back(std::move(csd));
-        reportWorkIfFinished(mCSDWorkIndex);
-        mCSDWorkIndex = kCSDSubmitted;
+        work->worklets.front()->output.configUpdate.push_back(std::move(csd));
+        mCSDSubmitted = true;
     }
 
     std::shared_ptr<C2Buffer> buffer = C2Buffer::CreateLinearBuffer(std::move(constBlock));
@@ -931,12 +1006,9 @@ void C2VEAComponent::onOutputBufferDone(uint64_t index, uint32_t payloadSize, bo
     }
     work->worklets.front()->output.buffers.emplace_back(buffer);
 
-    // Set timestamp.
-    work->worklets.front()->output.ordinal.timestamp = static_cast<uint64_t>(timestamp);
-
     mOutputBlockMap.erase(blockIter);
 
-    reportWorkIfFinished(index);
+    reportWorkIfFinished(work->input.ordinal.frameIndex.peeku());
 }
 
 std::deque<std::unique_ptr<C2Work>>::iterator C2VEAComponent::findPendingWorkByIndex(
@@ -951,6 +1023,24 @@ C2Work* C2VEAComponent::getPendingWorkByIndex(uint64_t index) {
     auto workIter = findPendingWorkByIndex(index);
     if (workIter == mPendingWorks.end()) {
         ALOGE("Can't find pending work by index: %" PRIu64 "", index);
+        return nullptr;
+    }
+    return workIter->get();
+}
+
+C2Work* C2VEAComponent::getPendingWorkByTimestamp(int64_t timestamp) {
+    if (timestamp < 0) {
+        ALOGE("Invalid timestamp: %" PRId64 "", timestamp);
+        return nullptr;
+    }
+    auto workIter = std::find_if(mPendingWorks.begin(), mPendingWorks.end(),
+                                 [timestamp](const std::unique_ptr<C2Work>& w) {
+                                     return !(w->input.flags & C2FrameData::FLAG_END_OF_STREAM) &&
+                                            w->input.ordinal.timestamp.peeku() ==
+                                                    static_cast<uint64_t>(timestamp);
+                                 });
+    if (workIter == mPendingWorks.end()) {
+        ALOGE("Can't find pending work by timestmap: %" PRId64 "", timestamp);
         return nullptr;
     }
     return workIter->get();
@@ -1019,7 +1109,7 @@ c2_status_t C2VEAComponent::flush_sm(flush_mode_t mode,
 void C2VEAComponent::onFlush(bool reinitAdaptor) {
     DCHECK(mTaskRunner->BelongsToCurrentThread());
     ALOGV("onFlush: reinitAdaptor = %d", reinitAdaptor);
-    EXPECT_RUNNING_OR_RETURN_ON_ERROR();
+    RETURN_ON_UNINITIALIZED_OR_ERROR();
 
     mVEAAdaptor.reset(nullptr);
     // Pop all works in mQueue and put into mPendingWorks.
@@ -1030,16 +1120,9 @@ void C2VEAComponent::onFlush(bool reinitAdaptor) {
 
     reportAbandonedWorks();
 
-    // Record the last dequeued work's frame index to mLastFlushedFrameIndex. Any returned input or
-    // output buffer whose index is not larger than mLastFlushedFrameIndex should be neglected since
-    // pending works are already flushed.
-    mLastFlushedFrameIndex = mLastDequeuedFrameIndex;
+    mFormatConverter = nullptr;
 
     if (reinitAdaptor) {
-        // Re-connect and initialized VEAAdaptor.
-#ifdef V4L2_CODEC2_ARC
-        mVEAAdaptor.reset(new arc::C2VEAAdaptorProxy());
-#endif
         VideoEncodeAcceleratorAdaptor::Result result = initializeVEA();
         if (result != VideoEncodeAcceleratorAdaptor::Result::SUCCESS) {
             ALOGE("Failed to re-initialize VEA, init_result = %d", result);
@@ -1064,7 +1147,7 @@ c2_status_t C2VEAComponent::drain_nb(drain_mode_t mode) {
 void C2VEAComponent::onDrain(uint32_t drainMode) {
     DCHECK(mTaskRunner->BelongsToCurrentThread());
     ALOGV("onDrain: mode = %u", drainMode);
-    EXPECT_RUNNING_OR_RETURN_ON_ERROR();
+    RETURN_ON_UNINITIALIZED_OR_ERROR();
 
     if (!mQueue.empty()) {
         // Mark last queued work as "drain-till-here" by setting drainMode. Do not change drainMode
@@ -1091,7 +1174,7 @@ void C2VEAComponent::onDrain(uint32_t drainMode) {
 void C2VEAComponent::onDrainDone(bool done) {
     DCHECK(mTaskRunner->BelongsToCurrentThread());
     ALOGV("onDrainDone");
-    EXPECT_RUNNING_OR_RETURN_ON_ERROR();
+    RETURN_ON_UNINITIALIZED_OR_ERROR();
 
     if (!done) {
         ALOGE("VEA flush (draining) is aborted...");
@@ -1148,9 +1231,6 @@ void C2VEAComponent::onStart(::base::WaitableEvent* done) {
         return;
     }
 
-    mLastDequeuedFrameIndex = -1;
-    mLastFlushedFrameIndex = -1;
-
     // Event will be signaled after onRequireBitstreamBuffers().
     mStartDoneEvent = done;
 }
@@ -1158,8 +1238,6 @@ void C2VEAComponent::onStart(::base::WaitableEvent* done) {
 VideoEncodeAcceleratorAdaptor::Result C2VEAComponent::initializeVEA() {
     DCHECK(mTaskRunner->BelongsToCurrentThread());
 
-    // TODO(johnylin): what is the right format we need to provide here?
-    media::VideoPixelFormat format = media::VideoPixelFormat::PIXEL_FORMAT_I420;
     media::Size visibleSize = mIntfImpl->getInputVisibleSize();
     media::VideoCodecProfile profile = c2ProfileToVideoCodecProfile(mIntfImpl->getOutputProfile());
     uint8_t level = c2LevelToLevelIDC(mIntfImpl->getOutputLevel());
@@ -1167,20 +1245,27 @@ VideoEncodeAcceleratorAdaptor::Result C2VEAComponent::initializeVEA() {
     updateEncodingParametersIfChanged();
 
     VideoEncoderAcceleratorConfig config;
-    config.mInputFormat = format;
+    config.mInputFormat = kInputPixelFormat;
     config.mInputVisibleSize = visibleSize;
     config.mOutputProfile = profile;
     config.mInitialBitrate = mRequestedBitrate;
     config.mInitialFramerate = mRequestedFrameRate;
     config.mH264OutputLevel = level;
-    config.mStorageType = VideoEncoderAcceleratorConfig::SHMEM;  // TODO(johnylin): correct this
+    config.mStorageType = VideoEncoderAcceleratorConfig::DMABUF;
 
     ALOGI("Initialize VEA by config{ format=%d, inputVisibleSize=%dx%d, profile=%d, level=%u, "
           "bitrate=%u, frameRate=%u, storageType=%d }",
-          format, visibleSize.width(), visibleSize.height(), profile, level, mRequestedBitrate,
-          mRequestedFrameRate, VideoEncoderAcceleratorConfig::SHMEM);
+          kInputPixelFormat, visibleSize.width(), visibleSize.height(), profile, level,
+          mRequestedBitrate, mRequestedFrameRate, config.mStorageType);
 
-    // Note: mVEAAdaptor should be already created and established channel by mIntfImpl.
+    // Re-create mVEAAdaptor if necessary. mVEAAdaptor will be created and established channel by
+    // mIntfImpl if this is the first time component starts.
+    if (!mVEAAdaptor) {
+#ifdef V4L2_CODEC2_ARC
+        mVEAAdaptor.reset(new arc::C2VEAAdaptorProxy());
+#endif
+    }
+
     VideoEncodeAcceleratorAdaptor::Result result = mVEAAdaptor->initialize(config, this);
     if (result != VideoEncodeAcceleratorAdaptor::Result::SUCCESS) {
         return result;
@@ -1191,7 +1276,7 @@ VideoEncodeAcceleratorAdaptor::Result C2VEAComponent::initializeVEA() {
     mKeyFramePeriod = mIntfImpl->getKeyFramePeriod();
     ALOGI("Set keyframe period = %u", mKeyFramePeriod);
     mKeyFrameSerial = 0;
-    mCSDWorkIndex = kCSDInit;
+    mCSDSubmitted = false;
 
     return VideoEncodeAcceleratorAdaptor::Result::SUCCESS;
 }
@@ -1205,6 +1290,12 @@ void C2VEAComponent::onRequireBitstreamBuffers(uint32_t inputCount,
     // 2. If |mStartDoneEvent| is null, component is recovering VEA after flush.
 
     DCHECK(mTaskRunner->BelongsToCurrentThread());
+    if (!mStartDoneEvent) {
+        // VEA may be released (component stopped) or get errors after flush. In such case we don't
+        // care about RequireBitstreamBuffers callback anymore.
+        RETURN_ON_UNINITIALIZED_OR_ERROR();
+    }
+
     ALOGV("onRequireBitstreamBuffers(inputCount=%u, inputCodedSize=%dx%d, outBufferSize=%u)",
           inputCount, inputCodedSize.width(), inputCodedSize.height(), outputBufferSize);
     CHECK_EQ(mComponentState, ComponentState::CONFIGURED);
@@ -1228,6 +1319,23 @@ void C2VEAComponent::onRequireBitstreamBuffers(uint32_t inputCount,
     mOutputBufferSize = outputBufferSize;
 
     mComponentState = ComponentState::STARTED;
+
+#ifdef USE_VEA_FORMAT_CONVERTER
+    // Note: OnRequireBitstreamBuffers() must not be called twice.
+    CHECK(!mFormatConverter);
+    mFormatConverter = C2VEAFormatConverter::Create(kInputPixelFormat, visibleSize, inputCount,
+                                                    inputCodedSize);
+    if (!mFormatConverter) {
+        if (mStartDoneEvent) {
+            mVEAInitResult = VideoEncodeAcceleratorAdaptor::Result::PLATFORM_FAILURE;
+            mStartDoneEvent->Signal();
+            mStartDoneEvent = nullptr;
+        } else {
+            reportError(C2_CORRUPTED);
+        }
+        return;
+    }
+#endif
 
     if (mStartDoneEvent) {
         mStartDoneEvent->Signal();
@@ -1318,17 +1426,22 @@ void C2VEAComponent::reportWorkIfFinished(uint64_t index) {
     }
 
     // EOS work will not be reported here. reportEOSWork() does it.
-    auto work = workIter->get();
-    if (isWorkDone(work)) {
-        work->result = C2_OK;
-        work->workletsProcessed = static_cast<uint32_t>(work->worklets.size());
-
-        ALOGV("Reported finished work index=%llu", work->input.ordinal.frameIndex.peekull());
-        std::list<std::unique_ptr<C2Work>> finishedWorks;
-        finishedWorks.emplace_back(std::move(*workIter));
-        mListener->onWorkDone_nb(shared_from_this(), std::move(finishedWorks));
+    if (isWorkDone(workIter->get())) {
+        reportWork(std::move(*workIter));
         mPendingWorks.erase(workIter);
     }
+}
+
+void C2VEAComponent::reportWork(std::unique_ptr<C2Work> work) {
+    DCHECK(mTaskRunner->BelongsToCurrentThread());
+    ALOGV("Reported finished work index=%llu", work->input.ordinal.frameIndex.peekull());
+
+    work->result = C2_OK;
+    work->workletsProcessed = static_cast<uint32_t>(work->worklets.size());
+
+    std::list<std::unique_ptr<C2Work>> finishedWorks;
+    finishedWorks.emplace_back(std::move(work));
+    mListener->onWorkDone_nb(shared_from_this(), std::move(finishedWorks));
 }
 
 bool C2VEAComponent::isWorkDone(const C2Work* work) const {
@@ -1345,9 +1458,8 @@ bool C2VEAComponent::isWorkDone(const C2Work* work) const {
         // returned by reportEOSWork() instead.
         return false;
     }
-    if (work->worklets.front()->output.buffers.empty() &&
-        mCSDWorkIndex != static_cast<int64_t>(work->input.ordinal.frameIndex.peeku())) {
-        // Output buffer is not returned from VEA yet (and this work is not CSD holder).
+    if (work->worklets.front()->output.buffers.empty()) {
+        // Output buffer is not returned from VEA yet.
         return false;
     }
     return true;  // This work is done.
@@ -1370,13 +1482,8 @@ void C2VEAComponent::reportEOSWork() {
     if (!eosWork->input.buffers.empty()) {
         eosWork->input.buffers.front().reset();
     }
-    eosWork->result = C2_OK;
-    eosWork->workletsProcessed = static_cast<uint32_t>(eosWork->worklets.size());
     eosWork->worklets.front()->output.flags = C2FrameData::FLAG_END_OF_STREAM;
-
-    std::list<std::unique_ptr<C2Work>> finishedWorks;
-    finishedWorks.emplace_back(std::move(eosWork));
-    mListener->onWorkDone_nb(shared_from_this(), std::move(finishedWorks));
+    reportWork(std::move(eosWork));
 }
 
 void C2VEAComponent::reportAbandonedWorks() {

@@ -249,7 +249,7 @@ void C2VEAAdaptorProxy::encodeOnMojoThread(uint64_t index, ::base::ScopedFD fram
 
 void C2VEAAdaptorProxy::useBitstreamBuffer(uint64_t index, ::base::ScopedFD shmemFd,
                                            uint32_t offset, uint32_t size) {
-    ALOGV("useBitstreamBuffer(frame_index=%" PRIu64 ")", index);
+    ALOGV("useBitstreamBuffer");
     mMojoTaskRunner->PostTask(
             FROM_HERE,
             ::base::BindOnce(&C2VEAAdaptorProxy::useBitstreamBufferOnMojoThread,
@@ -314,7 +314,7 @@ void C2VEAAdaptorProxy::NotifyVideoFrameDone(uint64_t index) {
 
 void C2VEAAdaptorProxy::BitstreamBufferReady(uint64_t index, uint32_t payloadSize, bool keyFrame,
                                              int64_t timestamp) {
-    ALOGV("BitstreamBufferReady(frame_index=%" PRIu64 ", timestamp=%" PRId64 ")", index, timestamp);
+    ALOGV("BitstreamBufferReady(index=%" PRIu64 ", timestamp=%" PRId64 ")", index, timestamp);
     mClient->bitstreamBufferReady(index, payloadSize, keyFrame, timestamp);
 }
 
