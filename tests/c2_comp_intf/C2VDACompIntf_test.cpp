@@ -28,7 +28,7 @@ const char* MEDIA_MIMETYPE_VIDEO_RAW = "video/raw";
 const char* MEDIA_MIMETYPE_VIDEO_AVC = "video/avc";
 
 const size_t kMaxInputBufferSize = 1048576;
-const C2Allocator::id_t kInputAllocators[] = {C2PlatformAllocatorStore::ION};
+const C2Allocator::id_t kInputAllocators[] = {C2PlatformAllocatorStore::BLOB};
 const C2Allocator::id_t kOutputAllocators[] = {C2VDAAllocatorStore::V4L2_BUFFERPOOL};
 const C2Allocator::id_t kSurfaceAllocator = C2VDAAllocatorStore::V4L2_BUFFERQUEUE;
 const C2BlockPool::local_id_t kDefaultOutputBlockPool = C2BlockPool::BASIC_GRAPHIC;
@@ -61,14 +61,14 @@ TEST_F(C2VDACompIntfTest, CreateInstance) {
 }
 
 TEST_F(C2VDACompIntfTest, TestInputFormat) {
-    C2StreamBufferTypeSetting::input expected(0u, C2FormatCompressed);
-    C2StreamBufferTypeSetting::input invalid(0u, C2FormatVideo);
+    C2StreamBufferTypeSetting::input expected(0u, C2BufferData::LINEAR);
+    C2StreamBufferTypeSetting::input invalid(0u, C2BufferData::GRAPHIC);
     TRACED_FAILURE(testReadOnlyParam(&expected, &invalid));
 }
 
 TEST_F(C2VDACompIntfTest, TestOutputFormat) {
-    C2StreamBufferTypeSetting::output expected(0u, C2FormatVideo);
-    C2StreamBufferTypeSetting::output invalid(0u, C2FormatCompressed);
+    C2StreamBufferTypeSetting::output expected(0u, C2BufferData::GRAPHIC);
+    C2StreamBufferTypeSetting::output invalid(0u, C2BufferData::LINEAR);
     TRACED_FAILURE(testReadOnlyParam(&expected, &invalid));
 }
 
@@ -243,7 +243,7 @@ TEST_F(C2VDACompIntfTest, TestColorAspects) {
 }
 
 TEST_F(C2VDACompIntfTest, TestUnsupportedParam) {
-    C2ComponentTemporalInfo unsupportedParam;
+    C2ComponentTimeStretchTuning unsupportedParam;
     std::vector<C2Param*> stackParams{&unsupportedParam};
     ASSERT_EQ(C2_BAD_INDEX, mIntf->query_vb(stackParams, {}, C2_DONT_BLOCK, nullptr));
     EXPECT_EQ(0u, unsupportedParam.size());  // invalidated
