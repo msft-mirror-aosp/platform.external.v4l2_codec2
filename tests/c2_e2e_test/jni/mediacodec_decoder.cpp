@@ -57,15 +57,8 @@ std::vector<const char*> GetSwVideoDecoderNames(VideoCodecType type) {
     }
 }
 
-#if ANDROID_VERSION >= 0x0900
 const uint32_t BUFFER_FLAG_CODEC_CONFIG = AMEDIACODEC_BUFFER_FLAG_CODEC_CONFIG;
 const char* FORMAT_KEY_SLICE_HEIGHT = AMEDIAFORMAT_KEY_SLICE_HEIGHT;
-#else
-// Define non-exported constants of MediaCodec NDK interface here for usage of
-// Android Version < Pie.
-const uint32_t BUFFER_FLAG_CODEC_CONFIG = 2;
-const char* FORMAT_KEY_SLICE_HEIGHT = "slice-height";
-#endif
 
 int64_t GetCurrentTimeNs() {
     timespec now;
@@ -114,9 +107,41 @@ std::unique_ptr<MediaCodecDecoder> MediaCodecDecoder::Create(const std::string& 
         return nullptr;
     }
 
-    return std::unique_ptr<MediaCodecDecoder>(
+    auto ret = std::unique_ptr<MediaCodecDecoder>(
             new MediaCodecDecoder(codec, std::move(encoded_data_helper), type, video_size,
                                   frame_rate, surface, render_on_release, loop));
+
+    AMediaCodecOnAsyncNotifyCallback cb{
+            .onAsyncInputAvailable =
+                    [](AMediaCodec* codec, void* userdata, int32_t index) {
+                        reinterpret_cast<MediaCodecDecoder*>(userdata)->OnAsyncInputAvailable(
+                                index);
+                    },
+            .onAsyncOutputAvailable =
+                    [](AMediaCodec* codec, void* userdata, int32_t index,
+                       AMediaCodecBufferInfo* buffer_info) {
+                        reinterpret_cast<MediaCodecDecoder*>(userdata)->OnAsyncOutputAvailable(
+                                index, buffer_info);
+                    },
+            .onAsyncFormatChanged =
+                    [](AMediaCodec* codec, void* userdata, AMediaFormat* format) {
+                        reinterpret_cast<MediaCodecDecoder*>(userdata)->OnAsyncFormatChanged(
+                                format);
+                    },
+            .onAsyncError =
+                    [](AMediaCodec* codec, void* userdata, media_status_t error, int32_t code,
+                       const char* detail) {
+                        ALOGE("Error %d (%d) %s", error, code, detail);
+                        assert(false);
+                    }};
+
+    auto status = AMediaCodec_setAsyncNotifyCallback(codec, cb, ret.get());
+    if (status != AMEDIA_OK) {
+        ALOGE("Failed to set async callback.");
+        return nullptr;
+    }
+
+    return ret;
 }
 
 MediaCodecDecoder::MediaCodecDecoder(AMediaCodec* codec,
@@ -144,6 +169,24 @@ void MediaCodecDecoder::AddOutputBufferReadyCb(const OutputBufferReadyCb& cb) {
 
 void MediaCodecDecoder::AddOutputFormatChangedCb(const OutputFormatChangedCb& cb) {
     output_format_changed_cbs_.push_back(cb);
+}
+
+void MediaCodecDecoder::OnAsyncInputAvailable(int32_t idx) {
+    std::lock_guard<std::mutex> lock(event_queue_mut_);
+    event_queue_.push({.type = INPUT_AVAILABLE, .idx = idx});
+    event_queue_cv_.notify_one();
+}
+
+void MediaCodecDecoder::OnAsyncOutputAvailable(int32_t idx, AMediaCodecBufferInfo* info) {
+    std::lock_guard<std::mutex> lock(event_queue_mut_);
+    event_queue_.push({.type = OUTPUT_AVAILABLE, .idx = idx, .info = *info});
+    event_queue_cv_.notify_one();
+}
+
+void MediaCodecDecoder::OnAsyncFormatChanged(AMediaFormat* format) {
+    std::lock_guard<std::mutex> lock(event_queue_mut_);
+    event_queue_.push({.type = FORMAT_CHANGED});
+    event_queue_cv_.notify_one();
 }
 
 void MediaCodecDecoder::Rewind() {
@@ -179,85 +222,56 @@ bool MediaCodecDecoder::Start() {
 
 bool MediaCodecDecoder::Decode() {
     while (!output_done_) {
-        size_t retries = 0;
-        bool success = false;
-
-        // It will keep retrying until one output buffer is dequeued successfully.
-        // On each retry we would like to enqueue input buffers as fast as possible.
-        // The retry loop will break as failure if maxmimum retries are reached or
-        // errors returned from enqueue input buffer or dequeue output buffer.
-        while (retries < kTimeoutMaxRetries && !success) {
-            if (!EnqueueInputBuffers()) return false;
-
-            switch (DequeueOutputBuffer()) {
-            case DequeueStatus::RETRY:
-                retries++;
-                break;
-            case DequeueStatus::SUCCESS:
-                success = true;
-                break;
-            case DequeueStatus::FAILURE:
-                return false;
+        CodecEvent evt;
+        {
+            std::unique_lock<std::mutex> lock(event_queue_mut_);
+            while (event_queue_.empty()) {
+                event_queue_cv_.wait(lock);
             }
+            evt = event_queue_.front();
+            event_queue_.pop();
         }
 
-        if (retries >= kTimeoutMaxRetries) {
-            ALOGE("Decoder did not produce an output buffer after %zu retries", kTimeoutMaxRetries);
+        bool success;
+        switch (evt.type) {
+        case INPUT_AVAILABLE:
+            success = EnqueueInputBuffers(evt.idx);
+            break;
+        case OUTPUT_AVAILABLE:
+            success = DequeueOutputBuffer(evt.idx, evt.info);
+            break;
+        case FORMAT_CHANGED:
+            success = GetOutputFormat();
+            break;
         }
-        if (!success) return false;
+        assert(success);
     }
     return true;
 }
 
-bool MediaCodecDecoder::EnqueueInputBuffers() {
-    ssize_t index;
-    while (!input_done_) {
-        index = AMediaCodec_dequeueInputBuffer(codec_, kTimeoutWaitForInputUs);
-        if (index == AMEDIACODEC_INFO_TRY_AGAIN_LATER)
-            return true;  // no available input buffers, try next time
+bool MediaCodecDecoder::EnqueueInputBuffers(int32_t index) {
+    if (index < 0) {
+        ALOGE("Unknown error while dequeueInputBuffer: %zd", index);
+        return false;
+    }
 
-        if (index < 0) {
-            ALOGE("Unknown error while dequeueInputBuffer: %zd", index);
-            return false;
-        }
+    if (looping_ && encoded_data_helper_->ReachEndOfStream()) {
+        encoded_data_helper_->Rewind();
+    }
 
-        if (looping_ && encoded_data_helper_->ReachEndOfStream()) {
-            encoded_data_helper_->Rewind();
-        }
-
-        if (encoded_data_helper_->ReachEndOfStream()) {
-            if (!FeedEOSInputBuffer(index)) return false;
-            input_done_ = true;
-        } else {
-            if (!FeedInputBuffer(index)) return false;
-        }
+    if (encoded_data_helper_->ReachEndOfStream()) {
+        if (!FeedEOSInputBuffer(index)) return false;
+        input_done_ = true;
+    } else {
+        if (!FeedInputBuffer(index)) return false;
     }
     return true;
 }
 
-MediaCodecDecoder::DequeueStatus MediaCodecDecoder::DequeueOutputBuffer() {
-    AMediaCodecBufferInfo info;
-    ssize_t index = AMediaCodec_dequeueOutputBuffer(codec_, &info, kTimeoutWaitForOutputUs);
-
-    switch (index) {
-    case AMEDIACODEC_INFO_TRY_AGAIN_LATER:
-        ALOGV("Try again later is reported");
-        return DequeueStatus::RETRY;
-    case AMEDIACODEC_INFO_OUTPUT_BUFFERS_CHANGED:
-        ALOGV("Output buffers changed");
-        return DequeueStatus::RETRY;
-    case AMEDIACODEC_INFO_OUTPUT_FORMAT_CHANGED:
-        ALOGV("Output format changed");
-        if (GetOutputFormat())
-            return DequeueStatus::SUCCESS;
-        else
-            return DequeueStatus::FAILURE;
-    default:
-        if (index < 0) {
-            ALOGE("Unknown error while dequeueOutputBuffer: %zd", index);
-            return DequeueStatus::FAILURE;
-        }
-        break;
+bool MediaCodecDecoder::DequeueOutputBuffer(int32_t index, AMediaCodecBufferInfo info) {
+    if (index < 0) {
+        ALOGE("Unknown error while dequeueOutputBuffer: %zd", index);
+        return false;
     }
 
     if (info.flags & AMEDIACODEC_BUFFER_FLAG_END_OF_STREAM) output_done_ = true;
@@ -272,9 +286,9 @@ MediaCodecDecoder::DequeueStatus MediaCodecDecoder::DequeueOutputBuffer() {
         }
     }
 
-    if (!ReceiveOutputBuffer(index, info, render_on_release_)) return DequeueStatus::FAILURE;
+    if (!ReceiveOutputBuffer(index, info, render_on_release_)) return false;
 
-    return DequeueStatus::SUCCESS;
+    return true;
 }
 
 bool MediaCodecDecoder::Stop() {
@@ -396,7 +410,6 @@ bool MediaCodecDecoder::GetOutputFormat() {
     int32_t crop_top = 0;
     int32_t crop_right = width - 1;
     int32_t crop_bottom = height - 1;
-#if ANDROID_VERSION >= 0x0900  // Android 9.0 (Pie)
     // Crop info is only avaiable on NDK version >= Pie.
     if (!AMediaFormat_getRect(format, AMEDIAFORMAT_KEY_DISPLAY_CROP, &crop_left, &crop_top,
                               &crop_right, &crop_bottom)) {
@@ -406,10 +419,6 @@ bool MediaCodecDecoder::GetOutputFormat() {
         crop_right = width - 1;
         crop_bottom = height - 1;
     }
-#endif
-    // Note: For ARC++N, width and height are set as same as the size of crop
-    //       window in ArcCodec. So the values above will be still satisfied in
-    //       ARC++N.
 
     // In current exiting ARC video decoder crop origin is always at (0,0)
     if (crop_left != 0 || crop_top != 0) {
