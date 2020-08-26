@@ -12,6 +12,7 @@
 #include <vector>
 
 #include <base/bind.h>
+#include <base/files/scoped_file.h>
 #include <base/memory/ptr_util.h>
 #include <log/log.h>
 
@@ -316,6 +317,7 @@ void V4L2Decoder::flush() {
     // Streamoff V4L2 queues to drop input and output buffers.
     mDevice->StopPolling();
     mOutputQueue->Streamoff();
+    mFrameAtDevice.clear();
     mInputQueue->Streamoff();
 
     // Streamon input queue again.
@@ -470,6 +472,7 @@ bool V4L2Decoder::changeResolution() {
 
     mOutputQueue->Streamoff();
     mOutputQueue->DeallocateBuffers();
+    mFrameAtDevice.clear();
     mBlockIdToV4L2Id.clear();
 
     if (mOutputQueue->AllocateBuffers(*numOutputBuffers, V4L2_MEMORY_DMABUF) == 0) {
@@ -501,6 +504,11 @@ void V4L2Decoder::tryFetchVideoFrame() {
 
     if (mVideoFramePool->hasPendingRequests()) {
         ALOGD("Previous callback is running, ignore.");
+        return;
+    }
+
+    if (mOutputQueue->FreeBuffersCount() == 0) {
+        ALOGD("No free V4L2 output buffers, ignore.");
         return;
     }
 
@@ -551,6 +559,11 @@ void V4L2Decoder::onVideoFrameReady(
     ALOGV("QBUF to output queue, blockId=%u, V4L2Id=%u", blockId, v4l2Id);
 
     std::move(*outputBuffer).QueueDMABuf(frame->getFDs());
+    if (mFrameAtDevice.find(v4l2Id) != mFrameAtDevice.end()) {
+        ALOGE("%s(): V4L2 buffer %d already enqueued.", __func__, v4l2Id);
+        onError();
+        return;
+    }
     mFrameAtDevice.insert(std::make_pair(v4l2Id, std::move(frame)));
 
     tryFetchVideoFrame();
