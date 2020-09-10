@@ -284,7 +284,7 @@ void V4L2Decoder::pumpDecodeRequest() {
               request.buffer->offset);
         inputBuffer->SetPlaneDataOffset(0, request.buffer->offset);
         inputBuffer->SetPlaneBytesUsed(0, request.buffer->offset + request.buffer->size);
-        std::vector<::base::ScopedFD> fds;
+        std::vector<int> fds;
         fds.push_back(std::move(request.buffer->dmabuf_fd));
         std::move(*inputBuffer).QueueDMABuf(fds);
 
@@ -502,17 +502,15 @@ void V4L2Decoder::tryFetchVideoFrame() {
 
     if (mState == State::Idle) return;
 
-    if (mVideoFramePool->hasPendingRequests()) {
-        ALOGD("Previous callback is running, ignore.");
-        return;
-    }
-
     if (mOutputQueue->FreeBuffersCount() == 0) {
         ALOGD("No free V4L2 output buffers, ignore.");
         return;
     }
 
-    mVideoFramePool->getVideoFrame(::base::BindOnce(&V4L2Decoder::onVideoFrameReady, mWeakThis));
+    if (!mVideoFramePool->getVideoFrame(
+                ::base::BindOnce(&V4L2Decoder::onVideoFrameReady, mWeakThis))) {
+        ALOGV("%s(): Previous callback is running, ignore.", __func__);
+    }
 }
 
 void V4L2Decoder::onVideoFrameReady(
