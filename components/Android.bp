@@ -13,8 +13,9 @@ cc_library {
         "V4L2ComponentFactory.cpp",
         "V4L2DecodeComponent.cpp",
         "V4L2DecodeInterface.cpp",
+        "V4L2EncodeComponent.cpp",
+        "V4L2EncodeInterface.cpp",
         "VideoDecoder.cpp",
-        "VideoTypes.cpp",
     ],
     export_include_dirs: [
         "include",
@@ -31,6 +32,7 @@ cc_library {
         "libstagefright_bufferqueue_helper",
         "libstagefright_foundation",
         "libv4l2_codec2_store",
+        "libui",
     ],
     static_libs: [
         "libv4l2_codec2_accel",
