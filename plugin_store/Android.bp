@@ -8,6 +8,7 @@ cc_library_shared {
 
     srcs: [
         "C2VdaBqBlockPool.cpp",
+        "C2VdaPooledBlockPool.cpp",
         "V4L2PluginStore.cpp",
         "VendorAllocatorLoader.cpp",
     ],
@@ -20,11 +21,13 @@ cc_library_shared {
     ],
     shared_libs: [
         "android.hardware.graphics.bufferqueue@2.0",
+        "libchrome",
         "libcutils",
         "libhardware",
         "libhidlbase",
         "libnativewindow",
         "liblog",
+        "libstagefright_bufferpool@1.0",
         "libstagefright_bufferqueue_helper",
         "libstagefright_foundation",
         "libui",
@@ -33,5 +36,7 @@ cc_library_shared {
     cflags: [
       "-Werror",
       "-Wall",
+      "-Wno-unused-parameter",  // needed for libchrome/base codes
+      "-Wthread-safety",
     ],
 }
