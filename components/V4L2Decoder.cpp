@@ -9,7 +9,10 @@
 
 #include <stdint.h>
 
+#include <vector>
+
 #include <base/bind.h>
+#include <base/files/scoped_file.h>
 #include <base/memory/ptr_util.h>
 #include <log/log.h>
 
@@ -267,8 +270,9 @@ void V4L2Decoder::pumpDecodeRequest() {
         auto request = std::move(mDecodeRequests.front());
         mDecodeRequests.pop();
 
-        ALOGV("QBUF to input queue, bitstreadId=%d", request.buffer->id);
-        inputBuffer->SetTimeStamp({.tv_sec = request.buffer->id});
+        const int32_t bitstreamId = request.buffer->id;
+        ALOGV("QBUF to input queue, bitstreadId=%d", bitstreamId);
+        inputBuffer->SetTimeStamp({.tv_sec = bitstreamId});
         size_t planeSize = inputBuffer->GetPlaneSize(0);
         if (request.buffer->size > planeSize) {
             ALOGE("The input size (%zu) is not enough, we need %zu", planeSize,
@@ -281,11 +285,15 @@ void V4L2Decoder::pumpDecodeRequest() {
               request.buffer->offset);
         inputBuffer->SetPlaneDataOffset(0, request.buffer->offset);
         inputBuffer->SetPlaneBytesUsed(0, request.buffer->offset + request.buffer->size);
-        std::vector<::base::ScopedFD> fds;
+        std::vector<int> fds;
         fds.push_back(std::move(request.buffer->dmabuf_fd));
-        std::move(*inputBuffer).QueueDMABuf(fds);
+        if (!std::move(*inputBuffer).QueueDMABuf(fds)) {
+            ALOGE("%s(): Failed to QBUF to input queue, bitstreamId=%d", __func__, bitstreamId);
+            onError();
+            return;
+        }
 
-        mPendingDecodeCbs.insert(std::make_pair(request.buffer->id, std::move(request.decodeCb)));
+        mPendingDecodeCbs.insert(std::make_pair(bitstreamId, std::move(request.decodeCb)));
     }
 }
 
@@ -311,13 +319,16 @@ void V4L2Decoder::flush() {
         std::move(mDrainCb).Run(VideoDecoder::DecodeStatus::kAborted);
     }
 
-    // Streamoff V4L2 queues to drop input and output buffers.
+    // Streamoff both V4L2 queues to drop input and output buffers.
     mDevice->StopPolling();
     mOutputQueue->Streamoff();
+    mFrameAtDevice.clear();
     mInputQueue->Streamoff();
 
-    // Streamon input queue again.
+    // Streamon both V4L2 queues.
     mInputQueue->Streamon();
+    mOutputQueue->Streamon();
+
     if (!mDevice->StartPolling(::base::BindRepeating(&V4L2Decoder::serviceDeviceTask, mWeakThis),
                                ::base::BindRepeating(&V4L2Decoder::onError, mWeakThis))) {
         ALOGE("Failed to start polling V4L2 device.");
@@ -381,15 +392,43 @@ void V4L2Decoder::serviceDeviceTask(bool event) {
 
         outputDequeued = true;
 
+        const size_t bufferId = dequeuedBuffer->BufferId();
+        const int32_t bitstreamId = static_cast<int32_t>(dequeuedBuffer->GetTimeStamp().tv_sec);
+        const size_t bytesUsed = dequeuedBuffer->GetPlaneBytesUsed(0);
+        const bool isLast = dequeuedBuffer->IsLast();
         ALOGV("DQBUF from output queue, bufferId=%zu, corresponding bitstreamId=%d, bytesused=%zu",
-              dequeuedBuffer->BufferId(),
-              static_cast<int32_t>(dequeuedBuffer->GetTimeStamp().tv_sec),
-              dequeuedBuffer->GetPlaneBytesUsed(0));
-        if (dequeuedBuffer->GetPlaneBytesUsed(0) > 0) {
-            sendOutputBuffer(dequeuedBuffer);
+              bufferId, bitstreamId, bytesUsed);
+
+        // Get the corresponding VideoFrame of the dequeued buffer.
+        auto it = mFrameAtDevice.find(bufferId);
+        ALOG_ASSERT(it != mFrameAtDevice.end(), "buffer %zu is not found at mFrameAtDevice",
+                    bufferId);
+        auto frame = std::move(it->second);
+        mFrameAtDevice.erase(it);
+
+        if (bytesUsed > 0) {
+            ALOGV("Send output frame(bitstreamId=%d) to client", bitstreamId);
+            frame->setBitstreamId(bitstreamId);
+            frame->setVisibleRect(mVisibleRect);
+            mOutputCb.Run(std::move(frame));
+        } else {
+            // Workaround(b/168750131): If the buffer is not enqueued before the next drain is done,
+            // then the driver will fail to notify EOS. So we recycle the buffer immediately.
+            ALOGV("Recycle empty buffer %zu back to V4L2 output queue.", bufferId);
+            dequeuedBuffer.reset();
+            auto outputBuffer = mOutputQueue->GetFreeBuffer(bufferId);
+            ALOG_ASSERT(outputBuffer, "V4L2 output queue slot %zu is not freed.", bufferId);
+
+            if (!std::move(*outputBuffer).QueueDMABuf(frame->getFDs())) {
+                ALOGE("%s(): Failed to recycle empty buffer to output queue.", __func__);
+                onError();
+                return;
+            }
+            mFrameAtDevice.insert(std::make_pair(bufferId, std::move(frame)));
         }
-        if (mDrainCb && dequeuedBuffer->IsLast()) {
-            ALOGD("All buffers are drained.");
+
+        if (mDrainCb && isLast) {
+            ALOGV("All buffers are drained.");
             sendV4L2DecoderCmd(true);
             std::move(mDrainCb).Run(VideoDecoder::DecodeStatus::kOk);
             setState(State::Idle);
@@ -414,21 +453,6 @@ void V4L2Decoder::serviceDeviceTask(bool event) {
         mTaskRunner->PostTask(FROM_HERE,
                               ::base::BindOnce(&V4L2Decoder::tryFetchVideoFrame, mWeakThis));
     }
-}
-
-void V4L2Decoder::sendOutputBuffer(media::V4L2ReadableBufferRef buffer) {
-    ALOGV("%s(bufferId=%zu)", __func__, buffer->BufferId());
-    ALOG_ASSERT(mTaskRunner->RunsTasksInCurrentSequence());
-
-    size_t bufferId = buffer->BufferId();
-    auto it = mFrameAtDevice.find(bufferId);
-    ALOG_ASSERT(it != mFrameAtDevice.end(), "buffer %zu is not found at mFrameAtDevice", bufferId);
-    auto block = std::move(it->second);
-    mFrameAtDevice.erase(it);
-
-    block->setBitstreamId(buffer->GetTimeStamp().tv_sec);
-    block->setVisibleRect(mVisibleRect);
-    mOutputCb.Run(std::move(block));
 }
 
 bool V4L2Decoder::dequeueResolutionChangeEvent() {
@@ -468,6 +492,8 @@ bool V4L2Decoder::changeResolution() {
 
     mOutputQueue->Streamoff();
     mOutputQueue->DeallocateBuffers();
+    mFrameAtDevice.clear();
+    mBlockIdToV4L2Id.clear();
 
     if (mOutputQueue->AllocateBuffers(*numOutputBuffers, V4L2_MEMORY_DMABUF) == 0) {
         ALOGE("Failed to allocate output buffer.");
@@ -494,37 +520,72 @@ void V4L2Decoder::tryFetchVideoFrame() {
     ALOG_ASSERT(mTaskRunner->RunsTasksInCurrentSequence());
     ALOG_ASSERT(mVideoFramePool, "mVideoFramePool is null, haven't get the instance yet?");
 
-    if (mState == State::Idle) return;
-
-    if (mVideoFramePool->hasPendingRequests()) {
-        ALOGD("Previous callback is running, ignore.");
+    if (mOutputQueue->FreeBuffersCount() == 0) {
+        ALOGD("No free V4L2 output buffers, ignore.");
         return;
     }
 
-    auto outputBuffer = mOutputQueue->GetFreeBuffer();
-    if (!outputBuffer) {
-        ALOGD("No free output buffer.");
-        return;
+    if (!mVideoFramePool->getVideoFrame(
+                ::base::BindOnce(&V4L2Decoder::onVideoFrameReady, mWeakThis))) {
+        ALOGV("%s(): Previous callback is running, ignore.", __func__);
     }
-    mVideoFramePool->getVideoFrame(
-            ::base::BindOnce(&V4L2Decoder::onVideoFrameReady, mWeakThis, std::move(*outputBuffer)));
 }
 
-void V4L2Decoder::onVideoFrameReady(media::V4L2WritableBufferRef outputBuffer,
-                                    std::unique_ptr<VideoFrame> frame) {
+void V4L2Decoder::onVideoFrameReady(
+        std::optional<VideoFramePool::FrameWithBlockId> frameWithBlockId) {
     ALOGV("%s()", __func__);
     ALOG_ASSERT(mTaskRunner->RunsTasksInCurrentSequence());
 
-    if (!frame) {
-        ALOGE("Get nullptr VideoFrame.");
+    if (!frameWithBlockId) {
+        ALOGE("Got nullptr VideoFrame.");
         onError();
         return;
     }
 
-    size_t bufferId = outputBuffer.BufferId();
-    ALOGV("QBUF to output queue, bufferId=%zu", bufferId);
-    std::move(outputBuffer).QueueDMABuf(frame->getFDs());
-    mFrameAtDevice.insert(std::make_pair(bufferId, std::move(frame)));
+    // Unwrap our arguments.
+    std::unique_ptr<VideoFrame> frame;
+    uint32_t blockId;
+    std::tie(frame, blockId) = std::move(*frameWithBlockId);
+
+    ::base::Optional<media::V4L2WritableBufferRef> outputBuffer;
+    // Find the V4L2 buffer that is associated with this block.
+    auto iter = mBlockIdToV4L2Id.find(blockId);
+    if (iter != mBlockIdToV4L2Id.end()) {
+        // If we have met this block in the past, reuse the same V4L2 buffer.
+        outputBuffer = mOutputQueue->GetFreeBuffer(iter->second);
+    } else if (mBlockIdToV4L2Id.size() < mOutputQueue->AllocatedBuffersCount()) {
+        // If this is the first time we see this block, give it the next
+        // available V4L2 buffer.
+        const size_t v4l2BufferId = mBlockIdToV4L2Id.size();
+        mBlockIdToV4L2Id.emplace(blockId, v4l2BufferId);
+        outputBuffer = mOutputQueue->GetFreeBuffer(v4l2BufferId);
+    } else {
+        // If this happens, this is a bug in VideoFramePool. It should never
+        // provide more blocks than we have V4L2 buffers.
+        ALOGE("Got more different blocks than we have V4L2 buffers for.");
+    }
+
+    if (!outputBuffer) {
+        ALOGE("V4L2 buffer not available.");
+        onError();
+        return;
+    }
+
+    uint32_t v4l2Id = outputBuffer->BufferId();
+    ALOGV("QBUF to output queue, blockId=%u, V4L2Id=%u", blockId, v4l2Id);
+
+    if (!std::move(*outputBuffer).QueueDMABuf(frame->getFDs())) {
+        ALOGE("%s(): Failed to QBUF to output queue, blockId=%u, V4L2Id=%u", __func__, blockId,
+              v4l2Id);
+        onError();
+        return;
+    }
+    if (mFrameAtDevice.find(v4l2Id) != mFrameAtDevice.end()) {
+        ALOGE("%s(): V4L2 buffer %d already enqueued.", __func__, v4l2Id);
+        onError();
+        return;
+    }
+    mFrameAtDevice.insert(std::make_pair(v4l2Id, std::move(frame)));
 
     tryFetchVideoFrame();
 }

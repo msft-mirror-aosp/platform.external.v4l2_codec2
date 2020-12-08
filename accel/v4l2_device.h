@@ -122,7 +122,19 @@ class V4L2WritableBufferRef {
   // so this reference becomes invalid.
   // In case of error, false is returned and the buffer is returned to the free
   // list.
-  bool QueueDMABuf(const std::vector<base::ScopedFD>& fds,
+  bool QueueDMABuf(const std::vector<base::ScopedFD>& scoped_fds,
+                   V4L2RequestRef* request_ref = nullptr) &&;
+  // Queue a DMABUF buffer, assigning |fds| as file descriptors for each plane.
+  // It is allowed the number of |fds| might be greater than the number of
+  // planes of this buffer. It happens when the v4l2 pixel format is single
+  // planar. The fd of the first plane is only used in that case.
+  // When requests are supported, a |request_ref| can be passed along this
+  // the buffer to be submitted.
+  // If successful, true is returned and the reference to the buffer is dropped
+  // so this reference becomes invalid.
+  // In case of error, false is returned and the buffer is returned to the free
+  // list.
+  bool QueueDMABuf(const std::vector<int>& fds,
                    V4L2RequestRef* request_ref = nullptr) &&;
 
   // Returns the number of planes in this buffer.
@@ -294,6 +306,8 @@ class V4L2Queue : public base::RefCountedThreadSafe<V4L2Queue> {
   // If the caller discards the returned reference, the underlying buffer is
   // made available to clients again.
   base::Optional<V4L2WritableBufferRef> GetFreeBuffer();
+  base::Optional<V4L2WritableBufferRef> GetFreeBuffer(
+      size_t requested_buffer_id);
 
   // Attempt to dequeue a buffer, and return a reference to it if one was
   // available.
