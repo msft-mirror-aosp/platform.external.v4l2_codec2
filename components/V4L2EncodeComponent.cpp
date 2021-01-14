@@ -18,6 +18,7 @@
 #include <android/hardware/graphics/common/1.0/types.h>
 #include <base/bind.h>
 #include <base/bind_helpers.h>
+#include <cutils/properties.h>
 #include <log/log.h>
 #include <media/stagefright/MediaDefs.h>
 #include <ui/GraphicBuffer.h>
@@ -27,6 +28,7 @@
 #include <rect.h>
 #include <v4l2_codec2/common/Common.h>
 #include <v4l2_codec2/common/EncodeHelpers.h>
+#include <v4l2_codec2/common/VideoTypes.h>
 #include <v4l2_device.h>
 #include <video_pixel_format.h>
 
@@ -128,6 +130,43 @@ std::optional<std::vector<VideoFramePlane>> getVideoFrameLayout(const C2ConstGra
     return planes;
 }
 
+// Get the video frame stride for the specified |format| and |size|.
+std::optional<uint32_t> getVideoFrameStride(media::VideoPixelFormat format, media::Size size) {
+    // Fetch a graphic block from the pool to determine the stride.
+    std::shared_ptr<C2BlockPool> pool;
+    c2_status_t status = GetCodec2BlockPool(C2BlockPool::BASIC_GRAPHIC, nullptr, &pool);
+    if (status != C2_OK) {
+        ALOGE("Failed to get basic graphic block pool (err=%d)", status);
+        return std::nullopt;
+    }
+
+    // Android HAL format doesn't have I420, we use YV12 instead and swap the U and V planes when
+    // converting to NV12. YCBCR_420_888 will allocate NV12 by minigbm.
+    HalPixelFormat halFormat = (format == media::VideoPixelFormat::PIXEL_FORMAT_I420)
+                                       ? HalPixelFormat::YV12
+                                       : HalPixelFormat::YCBCR_420_888;
+
+    std::shared_ptr<C2GraphicBlock> block;
+    status = pool->fetchGraphicBlock(size.width(), size.height(), static_cast<uint32_t>(halFormat),
+                                     C2MemoryUsage(C2MemoryUsage::CPU_READ), &block);
+    if (status != C2_OK) {
+        ALOGE("Failed to fetch graphic block (err=%d)", status);
+        return std::nullopt;
+    }
+
+    const C2ConstGraphicBlock constBlock =
+            block->share(C2Rect(size.width(), size.height()), C2Fence());
+    media::VideoPixelFormat pixelFormat;
+    std::optional<std::vector<VideoFramePlane>> planes =
+            getVideoFrameLayout(constBlock, &pixelFormat);
+    if (!planes || planes.value().empty()) {
+        ALOGE("Failed to get video frame layout from block");
+        return std::nullopt;
+    }
+
+    return planes.value()[0].mStride;
+}
+
 // The maximum size for output buffer, which is chosen empirically for a 1080p video.
 constexpr size_t kMaxBitstreamBufferSizeInBytes = 2 * 1024 * 1024;  // 2MB
 // The frame size for 1080p (FHD) video in pixels.
@@ -148,12 +187,15 @@ size_t GetMaxOutputBufferSize(const media::Size& size) {
 constexpr size_t kInputBufferCount = 2;
 constexpr size_t kOutputBufferCount = 2;
 
-// Define V4L2_CID_MPEG_VIDEO_H264_SPS_PPS_BEFORE_IDR control code if not present in header files.
-#ifndef V4L2_CID_MPEG_VIDEO_H264_SPS_PPS_BEFORE_IDR
-#define V4L2_CID_MPEG_VIDEO_H264_SPS_PPS_BEFORE_IDR (V4L2_CID_MPEG_BASE + 388)
+// Define V4L2_CID_MPEG_VIDEO_PREPEND_SPSPPS_TO_IDR control code if not present in header files.
+#ifndef V4L2_CID_MPEG_VIDEO_PREPEND_SPSPPS_TO_IDR
+#define V4L2_CID_MPEG_VIDEO_PREPEND_SPSPPS_TO_IDR (V4L2_CID_MPEG_BASE + 644)
 #endif
 
 }  // namespace
+
+// static
+std::atomic<int32_t> V4L2EncodeComponent::sConcurrentInstances = 0;
 
 // static
 std::unique_ptr<V4L2EncodeComponent::InputFrame> V4L2EncodeComponent::InputFrame::Create(
@@ -173,6 +215,17 @@ std::shared_ptr<C2Component> V4L2EncodeComponent::create(
         C2ComponentFactory::ComponentDeleter deleter) {
     ALOGV("%s(%s)", __func__, name.c_str());
 
+    static const int32_t kMaxConcurrentInstances =
+            property_get_int32("debug.v4l2_codec2.encode.concurrent-instances", -1);
+
+    static std::mutex mutex;
+    std::lock_guard<std::mutex> lock(mutex);
+    if (kMaxConcurrentInstances >= 0 && sConcurrentInstances.load() >= kMaxConcurrentInstances) {
+        ALOGW("Cannot create additional encoder, maximum number of instances reached: %d",
+              kMaxConcurrentInstances);
+        return nullptr;
+    }
+
     auto interface = std::make_shared<V4L2EncodeInterface>(name, std::move(helper));
     if (interface->status() != C2_OK) {
         ALOGE("Component interface initialization failed (error code %d)", interface->status());
@@ -190,6 +243,8 @@ V4L2EncodeComponent::V4L2EncodeComponent(C2String name, c2_node_id_t id,
         mInterface(std::move(interface)),
         mComponentState(ComponentState::LOADED) {
     ALOGV("%s(%s)", __func__, name.c_str());
+
+    sConcurrentInstances.fetch_add(1, std::memory_order_relaxed);
 }
 
 V4L2EncodeComponent::~V4L2EncodeComponent() {
@@ -205,6 +260,8 @@ V4L2EncodeComponent::~V4L2EncodeComponent() {
                                    &mWeakThisFactory));
         mEncoderThread.Stop();
     }
+
+    sConcurrentInstances.fetch_sub(1, std::memory_order_relaxed);
     ALOGV("%s(): done", __func__);
 }
 
@@ -404,6 +461,8 @@ void V4L2EncodeComponent::stopTask(::base::WaitableEvent* done) {
     // Flushing the encoder will abort all pending work and stop polling and streaming on the V4L2
     // device queues.
     flush();
+
+    mInputFormatConverter.reset();
 
     // Deallocate all V4L2 device input and output buffers.
     destroyInputBuffers();
@@ -615,12 +674,12 @@ bool V4L2EncodeComponent::initializeEncoder() {
     // of the device's preferred formats in combination with an input format convertor.
     if (!configureInputFormat(kInputPixelFormat)) return false;
 
-    // Create input and output buffers.
-    // TODO(dstaessens): Avoid allocating output buffers, encode directly into blockpool buffers.
-    if (!createInputBuffers() || !createOutputBuffers()) return false;
+    // Create input buffers. Output buffers will be created later after the client
+    // configures which block pool to use.
+    if (!createInputBuffers()) return false;
 
     // Configure the device, setting all required controls.
-    uint8_t level = c2LevelToLevelIDC(mInterface->getOutputLevel());
+    uint8_t level = c2LevelToV4L2Level(mInterface->getOutputLevel());
     if (!configureDevice(outputProfile, level)) return false;
 
     // We're ready to start encoding now.
@@ -643,11 +702,18 @@ bool V4L2EncodeComponent::configureInputFormat(media::VideoPixelFormat inputForm
     ALOG_ASSERT(!mVisibleSize.IsEmpty());
     ALOG_ASSERT(!mInputFormatConverter);
 
+    std::optional<uint32_t> stride = getVideoFrameStride(inputFormat, mVisibleSize);
+    if (!stride) {
+        ALOGE("Failed to get video frame stride");
+        reportError(C2_CORRUPTED);
+        return false;
+    }
+
     // First try to use the requested pixel format directly.
     ::base::Optional<struct v4l2_format> format;
     auto fourcc = media::Fourcc::FromVideoPixelFormat(inputFormat, false);
     if (fourcc) {
-        format = mInputQueue->SetFormat(fourcc->ToV4L2PixFmt(), mVisibleSize, 0);
+        format = mInputQueue->SetFormat(fourcc->ToV4L2PixFmt(), mVisibleSize, 0, *stride);
     }
 
     // If the device doesn't support the requested input format we'll try the device's preferred
@@ -657,7 +723,7 @@ bool V4L2EncodeComponent::configureInputFormat(media::VideoPixelFormat inputForm
         std::vector<uint32_t> preferredFormats =
                 mDevice->PreferredInputFormat(media::V4L2Device::Type::kEncoder);
         for (uint32_t i = 0; !format && i < preferredFormats.size(); ++i) {
-            format = mInputQueue->SetFormat(preferredFormats[i], mVisibleSize, 0);
+            format = mInputQueue->SetFormat(preferredFormats[i], mVisibleSize, 0, *stride);
         }
     }
 
@@ -685,6 +751,18 @@ bool V4L2EncodeComponent::configureInputFormat(media::VideoPixelFormat inputForm
     // Calculate the input coded size from the format.
     // TODO(dstaessens): How is this different from mInputLayout->coded_size()?
     mInputCodedSize = media::V4L2Device::AllocatedSizeFromV4L2Format(*format);
+
+    // Configuring the input format might cause the output buffer size to change.
+    auto outputFormat = mOutputQueue->GetFormat();
+    if (!outputFormat.first) {
+        ALOGE("Failed to get output format (errno: %i)", outputFormat.second);
+        return false;
+    }
+    uint32_t AdjustedOutputBufferSize = outputFormat.first->fmt.pix_mp.plane_fmt[0].sizeimage;
+    if (mOutputBufferSize != AdjustedOutputBufferSize) {
+        mOutputBufferSize = AdjustedOutputBufferSize;
+        ALOGV("Output buffer size adjusted to: %u", mOutputBufferSize);
+    }
 
     // Add an input format convertor if the device doesn't support the requested input format.
     // Note: The amount of input buffers in the convertor should match the amount of buffers on the
@@ -765,7 +843,7 @@ bool V4L2EncodeComponent::configureOutputFormat(media::VideoCodecProfile outputP
     }
 
     // The device might adjust the requested output buffer size to match hardware requirements.
-    mOutputBufferSize = ::base::checked_cast<size_t>(format->fmt.pix_mp.plane_fmt[0].sizeimage);
+    mOutputBufferSize = format->fmt.pix_mp.plane_fmt[0].sizeimage;
 
     ALOGV("Output format set to %s (buffer size: %u)", media::GetProfileName(outputProfile).c_str(),
           mOutputBufferSize);
@@ -798,13 +876,13 @@ bool V4L2EncodeComponent::configureDevice(media::VideoCodecProfile outputProfile
     }
 
     // When encoding H.264 we want to prepend SPS and PPS to each IDR for resilience. Some
-    // devices support this through the V4L2_CID_MPEG_VIDEO_H264_SPS_PPS_BEFORE_IDR control.
-    // TODO(b/161495502): V4L2_CID_MPEG_VIDEO_H264_SPS_PPS_BEFORE_IDR is currently not supported
+    // devices support this through the V4L2_CID_MPEG_VIDEO_PREPEND_SPSPPS_TO_IDR control.
+    // TODO(b/161495502): V4L2_CID_MPEG_VIDEO_PREPEND_SPSPPS_TO_IDR is currently not supported
     // yet, just log a warning if the operation was unsuccessful for now.
-    if (mDevice->IsCtrlExposed(V4L2_CID_MPEG_VIDEO_H264_SPS_PPS_BEFORE_IDR)) {
+    if (mDevice->IsCtrlExposed(V4L2_CID_MPEG_VIDEO_PREPEND_SPSPPS_TO_IDR)) {
         if (!mDevice->SetExtCtrls(
                     V4L2_CTRL_CLASS_MPEG,
-                    {media::V4L2ExtCtrl(V4L2_CID_MPEG_VIDEO_H264_SPS_PPS_BEFORE_IDR, 1)})) {
+                    {media::V4L2ExtCtrl(V4L2_CID_MPEG_VIDEO_PREPEND_SPSPPS_TO_IDR, 1)})) {
             ALOGE("Failed to configure device to prepend SPS and PPS to each IDR");
             return false;
         }
@@ -830,9 +908,9 @@ bool V4L2EncodeComponent::configureDevice(media::VideoCodecProfile outputProfile
 
     // Set H.264 output level. Use Level 4.0 as fallback default.
     // TODO(dstaessens): Investigate code added by hiroh@ recently to select level in Chrome VEA.
-    uint8_t h264Level = outputH264Level.value_or(media::H264SPS::kLevelIDC4p0);
-    h264Ctrls.emplace_back(V4L2_CID_MPEG_VIDEO_H264_LEVEL,
-                           media::V4L2Device::H264LevelIdcToV4L2H264Level(h264Level));
+    int32_t h264Level =
+            static_cast<int32_t>(outputH264Level.value_or(V4L2_MPEG_VIDEO_H264_LEVEL_4_0));
+    h264Ctrls.emplace_back(V4L2_CID_MPEG_VIDEO_H264_LEVEL, h264Level);
 
     // Ask not to put SPS and PPS into separate bitstream buffers.
     h264Ctrls.emplace_back(V4L2_CID_MPEG_VIDEO_HEADER_MODE,
@@ -866,9 +944,8 @@ bool V4L2EncodeComponent::updateEncodingParameters() {
         ALOGV("Setting bitrate to %u", bitrate);
         if (!mDevice->SetExtCtrls(V4L2_CTRL_CLASS_MPEG,
                                   {media::V4L2ExtCtrl(V4L2_CID_MPEG_VIDEO_BITRATE, bitrate)})) {
-            // TODO(b/161495749): V4L2_CID_MPEG_VIDEO_BITRATE is currently not supported yet, assume
-            // the operation was successful for now.
-            ALOGW("Requesting bitrate change failed");
+            ALOGE("Requesting bitrate change failed");
+            return false;
         }
         mBitrate = bitrate;
     }
@@ -885,9 +962,8 @@ bool V4L2EncodeComponent::updateEncodingParameters() {
         parms.parm.output.timeperframe.numerator = 1;
         parms.parm.output.timeperframe.denominator = framerate;
         if (mDevice->Ioctl(VIDIOC_S_PARM, &parms) != 0) {
-            // TODO(b/161499573): VIDIOC_S_PARM is currently not supported yet, assume the operation
-            // was successful for now.
-            ALOGW("Requesting framerate change failed");
+            ALOGE("Requesting framerate change failed");
+            return false;
         }
         mFramerate = framerate;
     }
@@ -917,9 +993,9 @@ bool V4L2EncodeComponent::updateEncodingParameters() {
     if (mKeyFrameCounter == 0) {
         if (!mDevice->SetExtCtrls(V4L2_CTRL_CLASS_MPEG,
                                   {media::V4L2ExtCtrl(V4L2_CID_MPEG_VIDEO_FORCE_KEY_FRAME)})) {
-            // TODO(b/161498590): V4L2_CID_MPEG_VIDEO_FORCE_KEY_FRAME is currently not supported
-            // yet, assume the operation was successful for now.
-            ALOGW("Failed requesting key frame");
+            ALOGE("Failed requesting key frame");
+            reportError(status);
+            return false;
         }
     }
 
@@ -936,9 +1012,13 @@ void V4L2EncodeComponent::scheduleNextEncodeTask() {
         return;
     }
 
+    // It's possible we flushed the encoder since this function was scheduled.
+    if (mInputWorkQueue.empty()) {
+        return;
+    }
+
     // Get the next work item. Currently only a single worklet per work item is supported. An input
     // buffer should always be supplied unless this is a drain or CSD request.
-    ALOG_ASSERT(!mInputWorkQueue.empty());
     C2Work* work = mInputWorkQueue.front().get();
     ALOG_ASSERT(work->input.buffers.size() <= 1u && work->worklets.size() == 1u);
 
@@ -1007,6 +1087,14 @@ bool V4L2EncodeComponent::encode(C2ConstGraphicBlock block, uint64_t index, int6
     ALOGV("%s()", __func__);
     ALOG_ASSERT(mEncoderTaskRunner->RunsTasksInCurrentSequence());
     ALOG_ASSERT(mEncoderState == EncoderState::ENCODING);
+
+    // By the time we get an input buffer, the output block pool should be configured.
+    if (mOutputBuffersMap.empty()) {
+        if (!createOutputBuffers()) {
+            reportError(C2_CORRUPTED);
+            return false;
+        }
+    }
 
     // Update dynamic encoding parameters (bitrate, framerate, key frame) if requested.
     if (!updateEncodingParameters()) return false;
@@ -1127,14 +1215,17 @@ void V4L2EncodeComponent::flush() {
         }
     }
 
-    // Return all buffers to the input format convertor and clear all references to graphic blocks
-    // in the input queue. We don't need to clear the output map as those buffers will still be
-    // used.
+    // Return all buffers to the input format convertor and clear all references to graphic and
+    // linear blocks in the input and output queue.
     for (auto& it : mInputBuffersMap) {
         if (mInputFormatConverter && it.second) {
             mInputFormatConverter->returnBlock(it.first);
         }
         it.second = nullptr;
+    }
+
+    for (auto& it : mOutputBuffersMap) {
+        it = nullptr;
     }
 
     // Report all queued work items as aborted.
@@ -1467,7 +1558,11 @@ bool V4L2EncodeComponent::enqueueInputBuffer(std::unique_ptr<InputFrame> frame,
         buffer->SetPlaneBytesUsed(i, bytesUsed);
     }
 
-    std::move(*buffer).QueueDMABuf(frame->getFDs());
+    if (!std::move(*buffer).QueueDMABuf(frame->getFDs())) {
+        ALOGE("Failed to queue input buffer using QueueDMABuf");
+        reportError(C2_CORRUPTED);
+        return false;
+    }
 
     ALOGV("Queued buffer in input queue (index: %" PRId64 ", timestamp: %" PRId64
           ", bufferId: %zu)",
@@ -1630,6 +1725,10 @@ bool V4L2EncodeComponent::createOutputBuffers() {
 
     // Fetch the output block pool.
     C2BlockPool::local_id_t poolId = mInterface->getBlockPoolId();
+    if (poolId == C2BlockPool::BASIC_LINEAR) {
+        ALOGW("Using unoptimized linear block pool");
+    }
+
     c2_status_t status = GetCodec2BlockPool(poolId, shared_from_this(), &mOutputBlockPool);
     if (status != C2_OK || !mOutputBlockPool) {
         ALOGE("Failed to get output block pool, error: %d", status);
