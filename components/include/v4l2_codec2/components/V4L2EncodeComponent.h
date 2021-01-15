@@ -29,7 +29,6 @@
 
 namespace media {
 class V4L2Device;
-class V4L2ReadableBuffer;
 class V4L2Queue;
 }  // namespace media
 
@@ -203,6 +202,8 @@ private:
     // Get the specified encoder |state| as string.
     static const char* encoderStateToString(EncoderState state);
 
+    // The number of concurrent encoder instances currently created.
+    static std::atomic<int32_t> sConcurrentInstances;
     // The component's registered name.
     const C2String mName;
     // The component's id, provided by the C2 framework upon initialization.

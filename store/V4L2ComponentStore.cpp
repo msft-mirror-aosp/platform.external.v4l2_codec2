@@ -16,6 +16,7 @@
 #include <C2.h>
 #include <C2Config.h>
 #include <log/log.h>
+#include <media/stagefright/foundation/MediaDefs.h>
 
 #include <v4l2_codec2/common/V4L2ComponentCommon.h>
 
@@ -26,6 +27,21 @@ const char* kCreateFactoryFuncName = "CreateCodec2Factory";
 const char* kDestroyFactoryFuncName = "DestroyCodec2Factory";
 
 const uint32_t kComponentRank = 0x80;
+
+std::string getMediaTypeFromComponentName(const std::string& name) {
+    if (name == V4L2ComponentName::kH264Decoder || name == V4L2ComponentName::kH264SecureDecoder ||
+        name == V4L2ComponentName::kH264Encoder) {
+        return MEDIA_MIMETYPE_VIDEO_AVC;
+    }
+    if (name == V4L2ComponentName::kVP8Decoder || name == V4L2ComponentName::kVP8SecureDecoder) {
+        return MEDIA_MIMETYPE_VIDEO_VP8;
+    }
+    if (name == V4L2ComponentName::kVP9Decoder || name == V4L2ComponentName::kVP9SecureDecoder) {
+        return MEDIA_MIMETYPE_VIDEO_VP9;
+    }
+    return "";
+}
+
 }  // namespace
 
 // static
@@ -86,6 +102,11 @@ c2_status_t V4L2ComponentStore::createComponent(C2String name,
                                                 std::shared_ptr<C2Component>* const component) {
     ALOGV("%s(%s)", __func__, name.c_str());
 
+    if (!V4L2ComponentName::isValid(name.c_str())) {
+        ALOGI("%s(): Invalid component name: %s", __func__, name.c_str());
+        return C2_NOT_FOUND;
+    }
+
     auto factory = GetFactory(name);
     if (factory == nullptr) return C2_CORRUPTED;
 
@@ -96,6 +117,11 @@ c2_status_t V4L2ComponentStore::createComponent(C2String name,
 c2_status_t V4L2ComponentStore::createInterface(
         C2String name, std::shared_ptr<C2ComponentInterface>* const interface) {
     ALOGV("%s(%s)", __func__, name.c_str());
+
+    if (!V4L2ComponentName::isValid(name.c_str())) {
+        ALOGI("%s(): Invalid component name: %s", __func__, name.c_str());
+        return C2_NOT_FOUND;
+    }
 
     auto factory = GetFactory(name);
     if (factory == nullptr) return C2_CORRUPTED;
@@ -155,11 +181,7 @@ c2_status_t V4L2ComponentStore::querySupportedValues_sm(
 
 ::C2ComponentFactory* V4L2ComponentStore::GetFactory(const C2String& name) {
     ALOGV("%s(%s)", __func__, name.c_str());
-
-    if (!V4L2ComponentName::isValid(name.c_str())) {
-        ALOGE("Invalid component name: %s", name.c_str());
-        return nullptr;
-    }
+    ALOG_ASSERT(V4L2ComponentName::isValid(name.c_str()));
 
     std::lock_guard<std::mutex> lock(mCachedFactoriesLock);
     const auto it = mCachedFactories.find(name);
@@ -187,39 +209,13 @@ std::shared_ptr<const C2Component::Traits> V4L2ComponentStore::GetTraits(const C
     auto it = mCachedTraits.find(name);
     if (it != mCachedTraits.end()) return it->second;
 
-    std::shared_ptr<C2ComponentInterface> intf;
-    auto res = createInterface(name, &intf);
-    if (res != C2_OK) {
-        ALOGE("failed to create interface for %s: %d", name.c_str(), res);
-        return nullptr;
-    }
-
-    bool isEncoder = V4L2ComponentName::isEncoder(name.c_str());
-    uint32_t mediaTypeIndex = isEncoder ? C2PortMediaTypeSetting::output::PARAM_TYPE
-                                        : C2PortMediaTypeSetting::input::PARAM_TYPE;
-    std::vector<std::unique_ptr<C2Param>> params;
-    res = intf->query_vb({}, {mediaTypeIndex}, C2_MAY_BLOCK, &params);
-    if (res != C2_OK) {
-        ALOGE("failed to query interface: %d", res);
-        return nullptr;
-    }
-    if (params.size() != 1u) {
-        ALOGE("failed to query interface: unexpected vector size: %zu", params.size());
-        return nullptr;
-    }
-
-    C2PortMediaTypeSetting* mediaTypeConfig = (C2PortMediaTypeSetting*)(params[0].get());
-    if (mediaTypeConfig == nullptr) {
-        ALOGE("failed to query media type");
-        return nullptr;
-    }
-
     auto traits = std::make_shared<C2Component::Traits>();
-    traits->name = intf->getName();
+    traits->name = name;
     traits->domain = C2Component::DOMAIN_VIDEO;
-    traits->kind = isEncoder ? C2Component::KIND_ENCODER : C2Component::KIND_DECODER;
-    traits->mediaType = mediaTypeConfig->m.value;
     traits->rank = kComponentRank;
+    traits->mediaType = getMediaTypeFromComponentName(name);
+    traits->kind = V4L2ComponentName::isEncoder(name.c_str()) ? C2Component::KIND_ENCODER
+                                                              : C2Component::KIND_DECODER;
 
     mCachedTraits.emplace(name, traits);
     return traits;
