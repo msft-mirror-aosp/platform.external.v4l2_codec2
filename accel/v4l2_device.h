@@ -267,14 +267,42 @@ class V4L2Queue : public base::RefCountedThreadSafe<V4L2Queue> {
   // |buffer_size| is the desired size in bytes of the buffer for single-planar
   // formats (i.e. sizeimage of the first plane). It can be set to 0 if not
   // relevant for the desired format.
+  // |stride| is the desired stride in bytes of the buffer (i.e. bytesperline).
+  // It can be set to 0 if not relevant or to let the driver decide.
   // If the format could be set, then the |v4l2_format| reflecting the actual
   // format is returned. It is guaranteed to feature the specified |fourcc|,
   // but any other parameter (including |size| and |buffer_size| may have been
   // adjusted by the driver, so the caller must check their values.
   base::Optional<struct v4l2_format> SetFormat(uint32_t fourcc,
                                                const Size& size,
-                                               size_t buffer_size)
+                                               size_t buffer_size,
+                                               uint32_t stride = 0)
       WARN_UNUSED_RESULT;
+
+  // Identical to |SetFormat|, but does not actually apply the format, and can
+  // be called anytime.
+  // Returns an adjusted V4L2 format if |fourcc| is supported by the queue, or
+  // |nullopt| if |fourcc| is not supported or an ioctl error happened.
+  base::Optional<struct v4l2_format> TryFormat(uint32_t fourcc,
+                                                 const Size& size,
+                                                 size_t buffer_size)
+      WARN_UNUSED_RESULT;
+
+  // Returns the currently set format on the queue. The result is returned as
+  // a std::pair where the first member is the format, or base::nullopt if the
+  // format could not be obtained due to an ioctl error. The second member is
+  // only used in case of an error and contains the |errno| set by the failing
+  // ioctl. If the first member is not base::nullopt, the second member will
+  // always be zero.
+  //
+  // If the second member is 0, then the first member is guaranteed to have
+  // a valid value. So clients that are not interested in the precise error
+  // message can just check that the first member is valid and go on.
+  //
+  // This pair is used because not all failures to get the format are
+  // necessarily errors, so we need to way to let the use decide whether it
+  // is one or not.
+  std::pair<base::Optional<struct v4l2_format>, int> GetFormat();
 
   // Allocate |count| buffers for the current format of this queue, with a
   // specific |memory| allocation, and returns the number of buffers allocated

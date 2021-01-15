@@ -329,6 +329,13 @@ void V4L2Decoder::flush() {
     mInputQueue->Streamon();
     mOutputQueue->Streamon();
 
+    // If there is no free buffer at mOutputQueue, tryFetchVideoFrame() should be triggerred after
+    // a buffer is DQBUF from output queue. Now all the buffers are dropped at mOutputQueue, we
+    // have to trigger tryFetchVideoFrame() here.
+    if (mVideoFramePool) {
+        tryFetchVideoFrame();
+    }
+
     if (!mDevice->StartPolling(::base::BindRepeating(&V4L2Decoder::serviceDeviceTask, mWeakThis),
                                ::base::BindRepeating(&V4L2Decoder::onError, mWeakThis))) {
         ALOGE("Failed to start polling V4L2 device.");
@@ -396,8 +403,8 @@ void V4L2Decoder::serviceDeviceTask(bool event) {
         const int32_t bitstreamId = static_cast<int32_t>(dequeuedBuffer->GetTimeStamp().tv_sec);
         const size_t bytesUsed = dequeuedBuffer->GetPlaneBytesUsed(0);
         const bool isLast = dequeuedBuffer->IsLast();
-        ALOGV("DQBUF from output queue, bufferId=%zu, corresponding bitstreamId=%d, bytesused=%zu",
-              bufferId, bitstreamId, bytesUsed);
+        ALOGV("DQBUF from output queue, bufferId=%zu, bitstreamId=%d, bytesused=%zu, isLast=%d",
+              bufferId, bitstreamId, bytesUsed, isLast);
 
         // Get the corresponding VideoFrame of the dequeued buffer.
         auto it = mFrameAtDevice.find(bufferId);
@@ -504,8 +511,11 @@ bool V4L2Decoder::changeResolution() {
         return false;
     }
 
+    // Release the previous VideoFramePool before getting a new one to guarantee only one pool
+    // exists at the same time.
+    mVideoFramePool.reset();
     // Always use fexible pixel 420 format YCBCR_420_888 in Android.
-    mGetPoolCb.Run(&mVideoFramePool, mCodedSize, HalPixelFormat::YCBCR_420_888, *numOutputBuffers);
+    mVideoFramePool = mGetPoolCb.Run(mCodedSize, HalPixelFormat::YCBCR_420_888, *numOutputBuffers);
     if (!mVideoFramePool) {
         ALOGE("Failed to get block pool with size: %s", mCodedSize.ToString().c_str());
         return false;
@@ -518,7 +528,12 @@ bool V4L2Decoder::changeResolution() {
 void V4L2Decoder::tryFetchVideoFrame() {
     ALOGV("%s()", __func__);
     ALOG_ASSERT(mTaskRunner->RunsTasksInCurrentSequence());
-    ALOG_ASSERT(mVideoFramePool, "mVideoFramePool is null, haven't get the instance yet?");
+
+    if (!mVideoFramePool) {
+        ALOGE("mVideoFramePool is null, failed to get the instance after resolution change?");
+        onError();
+        return;
+    }
 
     if (mOutputQueue->FreeBuffersCount() == 0) {
         ALOGD("No free V4L2 output buffers, ignore.");
