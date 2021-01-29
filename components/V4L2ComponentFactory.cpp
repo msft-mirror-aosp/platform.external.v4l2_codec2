@@ -15,6 +15,8 @@
 #include <v4l2_codec2/common/V4L2ComponentCommon.h>
 #include <v4l2_codec2/components/V4L2DecodeComponent.h>
 #include <v4l2_codec2/components/V4L2DecodeInterface.h>
+#include <v4l2_codec2/components/V4L2EncodeComponent.h>
+#include <v4l2_codec2/components/V4L2EncodeInterface.h>
 #include <v4l2_codec2/store/V4L2ComponentStore.h>
 
 namespace android {
@@ -61,12 +63,11 @@ c2_status_t V4L2ComponentFactory::createComponent(c2_node_id_t id,
     }
 
     if (mIsEncoder) {
-        // TODO(b/143333813): Fill the encoder component.
-        return C2_BAD_VALUE;
+        *component = V4L2EncodeComponent::create(mComponentName, id, mReflector, deleter);
     } else {
         *component = V4L2DecodeComponent::create(mComponentName, id, mReflector, deleter);
-        return *component ? C2_OK : C2_BAD_VALUE;
     }
+    return *component ? C2_OK : C2_BAD_VALUE;
 }
 
 c2_status_t V4L2ComponentFactory::createInterface(
@@ -80,8 +81,12 @@ c2_status_t V4L2ComponentFactory::createInterface(
     }
 
     if (mIsEncoder) {
-        // TODO(b/143333813): Fill the encoder component.
-        return C2_BAD_VALUE;
+        *interface = std::shared_ptr<C2ComponentInterface>(
+                new SimpleInterface<V4L2EncodeInterface>(
+                        mComponentName.c_str(), id,
+                        std::make_shared<V4L2EncodeInterface>(mComponentName, mReflector)),
+                deleter);
+        return C2_OK;
     } else {
         *interface = std::shared_ptr<C2ComponentInterface>(
                 new SimpleInterface<V4L2DecodeInterface>(
@@ -94,7 +99,8 @@ c2_status_t V4L2ComponentFactory::createInterface(
 
 }  // namespace android
 
-extern "C" ::C2ComponentFactory* CreateCodec2Factory(const char* componentName) {
+__attribute__((cfi_canonical_jump_table)) extern "C" ::C2ComponentFactory* CreateCodec2Factory(
+        const char* componentName) {
     ALOGV("%s(%s)", __func__, componentName);
 
     if (!android::V4L2ComponentName::isValid(componentName)) {
@@ -106,7 +112,8 @@ extern "C" ::C2ComponentFactory* CreateCodec2Factory(const char* componentName) 
     return new android::V4L2ComponentFactory(componentName, isEncoder);
 }
 
-extern "C" void DestroyCodec2Factory(::C2ComponentFactory* factory) {
+__attribute__((cfi_canonical_jump_table)) extern "C" void DestroyCodec2Factory(
+        ::C2ComponentFactory* factory) {
     ALOGV("%s()", __func__);
     delete factory;
 }
