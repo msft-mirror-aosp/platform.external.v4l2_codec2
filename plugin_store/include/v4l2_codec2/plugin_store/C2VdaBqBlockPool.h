@@ -17,14 +17,6 @@
 namespace android {
 
 /**
- * Marks the BlockPoolData in |sharedBlock| as shared. The destructor of BlockPoolData would not
- * call detachBuffer to BufferQueue if it is shared.
- *
- * \param sharedBlock  the C2ConstGraphicBlock which is about to pass to client.
- */
-c2_status_t MarkBlockPoolDataAsShared(const C2ConstGraphicBlock& sharedBlock);
-
-/**
  * The BufferQueue-backed block pool design which supports to request arbitrary count of graphic
  * buffers from IGBP, and use this buffer set among codec component and client.
  *
@@ -97,6 +89,8 @@ public:
      *
      */
     bool setNotifyBlockAvailableCb(base::OnceClosure cb);
+
+    std::optional<uint32_t> getBufferIdFromGraphicBlock(const C2Block2D& block);
 
 private:
     friend struct C2VdaBqBlockPoolData;
