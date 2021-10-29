@@ -631,20 +631,24 @@ bool V4L2Encoder::configureH264(C2Config::profile_t outputProfile,
         ALOGV("Device doesn't support prepending SPS and PPS to IDR, injecting manually.");
     }
 
+    // Set the H.264 profile.
+    const int32_t profile = V4L2Device::c2ProfileToV4L2H264Profile(outputProfile);
+    if (profile < 0) {
+        ALOGE("Trying to set invalid H.264 profile");
+        return false;
+    }
+    if (!mDevice->setExtCtrls(V4L2_CTRL_CLASS_MPEG,
+                              {V4L2ExtCtrl(V4L2_CID_MPEG_VIDEO_H264_PROFILE, profile)})) {
+        ALOGE("Failed setting H.264 profile to %u", outputProfile);
+        return false;
+    }
+
     std::vector<V4L2ExtCtrl> h264Ctrls;
 
     // No B-frames, for lowest decoding latency.
     h264Ctrls.emplace_back(V4L2_CID_MPEG_VIDEO_B_FRAMES, 0);
     // Quantization parameter maximum value (for variable bitrate control).
     h264Ctrls.emplace_back(V4L2_CID_MPEG_VIDEO_H264_MAX_QP, 51);
-
-    // Set H.264 profile.
-    int32_t profile = V4L2Device::c2ProfileToV4L2H264Profile(outputProfile);
-    if (profile < 0) {
-        ALOGE("Trying to set invalid H.264 profile");
-        return false;
-    }
-    h264Ctrls.emplace_back(V4L2_CID_MPEG_VIDEO_H264_PROFILE, profile);
 
     // Set H.264 output level. Use Level 4.0 as fallback default.
     int32_t h264Level =
