@@ -131,7 +131,7 @@ c2_status_t FormatConverter::initialize(VideoPixelFormat outFormat, const ui::Si
         halFormat = HalPixelFormat::YCBCR_420_888;  // will allocate NV12 by minigbm.
     }
 
-    uint32_t bufferCount = std::max(inputCount, kMinInputBufferCount);
+    uint32_t bufferCount = std::max(inputCount, 1u);
     for (uint32_t i = 0; i < bufferCount; i++) {
         std::shared_ptr<C2GraphicBlock> block;
         status = pool->fetchGraphicBlock(codedSize.width, codedSize.height,

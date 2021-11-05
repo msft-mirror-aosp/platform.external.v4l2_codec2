@@ -65,9 +65,6 @@ public:
     bool isReady() const { return !mAvailableQueue.empty(); }
 
 private:
-    // The minimal number requirement of allocated buffers for conversion. This value is the same as
-    // kMinInputBufferArraySize from CCodecBufferChannel.
-    static constexpr uint32_t kMinInputBufferCount = 8;
     // The constant used by BlockEntry to indicate no frame is associated with the BlockEntry.
     static constexpr uint64_t kNoFrameAssociated = ~static_cast<uint64_t>(0);
 
