@@ -180,7 +180,11 @@ V4L2DecodeComponent::V4L2DecodeComponent(const std::string& name, c2_node_id_t i
 V4L2DecodeComponent::~V4L2DecodeComponent() {
     ALOGV("%s()", __func__);
 
-    release();
+    if (mDecoderThread.IsRunning() && !mDecoderTaskRunner->RunsTasksInCurrentSequence()) {
+        mDecoderTaskRunner->PostTask(
+                FROM_HERE, ::base::BindOnce(&V4L2DecodeComponent::releaseTask, mWeakThis));
+        mDecoderThread.Stop();
+    }
 
     sConcurrentInstances.fetch_sub(1, std::memory_order_relaxed);
     ALOGV("%s() done", __func__);

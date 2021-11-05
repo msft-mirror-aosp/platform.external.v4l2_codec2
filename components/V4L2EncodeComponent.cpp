@@ -242,7 +242,7 @@ V4L2EncodeComponent::~V4L2EncodeComponent() {
     ALOGV("%s()", __func__);
 
     // Stop encoder thread and invalidate pointers if component wasn't stopped before destroying.
-    if (mEncoderThread.IsRunning()) {
+    if (mEncoderThread.IsRunning() && !mEncoderTaskRunner->RunsTasksInCurrentSequence()) {
         mEncoderTaskRunner->PostTask(
                 FROM_HERE, ::base::BindOnce(
                                    [](::base::WeakPtrFactory<V4L2EncodeComponent>* weakPtrFactory) {
