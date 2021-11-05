@@ -510,8 +510,8 @@ void V4L2EncodeComponent::queueTask(std::unique_ptr<C2Work> work) {
                 work->input.buffers.front()->data().graphicBlocks().front();
         if (mInputFormatConverter) {
             ALOGV("Converting input block (index: %" PRIu64 ")", index);
-            c2_status_t status = C2_CORRUPTED;
-            inputBlock = mInputFormatConverter->convertBlock(index, inputBlock, &status);
+            c2_status_t status =
+                    mInputFormatConverter->convertBlock(index, inputBlock, &inputBlock);
             if (status != C2_OK) {
                 ALOGE("Failed to convert input block (index: %" PRIu64 ")", index);
                 reportError(status);
