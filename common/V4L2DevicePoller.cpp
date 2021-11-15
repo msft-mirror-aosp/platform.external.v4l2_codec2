@@ -103,7 +103,7 @@ void V4L2DevicePoller::schedulePoll() {
 }
 
 void V4L2DevicePoller::devicePollTask() {
-    ALOG_ASSERT(mClientTaskTunner->RunsTasksInCurrentSequence());
+    ALOG_ASSERT(mPollThread.task_runner()->RunsTasksInCurrentSequence());
 
     while (true) {
         ALOGV("Waiting for poll to be scheduled.");
