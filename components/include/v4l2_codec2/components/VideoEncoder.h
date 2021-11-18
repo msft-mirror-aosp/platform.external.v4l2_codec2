@@ -28,7 +28,7 @@ public:
     //       is returned by an InputBufferDoneCB() call.
     class InputFrame {
     public:
-        InputFrame(std::vector<int>&& fds, std::vector<VideoFramePlane>&& planes,
+        InputFrame(std::vector<int>&& fds, const std::vector<VideoFramePlane>& planes,
                    VideoPixelFormat pixelFormat, uint64_t index, int64_t timestamp);
         ~InputFrame() = default;
 

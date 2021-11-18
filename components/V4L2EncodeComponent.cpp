@@ -24,10 +24,8 @@
 #include <ui/GraphicBuffer.h>
 #include <ui/Size.h>
 
-#include <v4l2_codec2/common/Common.h>
 #include <v4l2_codec2/common/EncodeHelpers.h>
 #include <v4l2_codec2/common/FormatConverter.h>
-#include <v4l2_codec2/common/VideoPixelFormat.h>
 #include <v4l2_codec2/components/BitstreamBuffer.h>
 #include <v4l2_codec2/components/V4L2EncodeInterface.h>
 #include <v4l2_codec2/components/V4L2Encoder.h>
@@ -170,23 +168,17 @@ std::optional<uint32_t> getVideoFrameStride(VideoPixelFormat format, ui::Size si
 }
 
 // Create an input frame from the specified graphic block.
-std::unique_ptr<V4L2Encoder::InputFrame> CreateInputFrame(const C2ConstGraphicBlock& block,
-                                                          uint64_t index, int64_t timestamp) {
-    VideoPixelFormat format;
-    std::optional<std::vector<VideoFramePlane>> planes = getVideoFrameLayout(block, &format);
-    if (!planes) {
-        ALOGE("Failed to get input block's layout");
-        return nullptr;
-    }
-
+std::unique_ptr<V4L2Encoder::InputFrame> createInputFrame(
+        const C2ConstGraphicBlock& block, VideoPixelFormat format,
+        const std::vector<VideoFramePlane>& planes, uint64_t index, int64_t timestamp) {
     std::vector<int> fds;
     const C2Handle* const handle = block.handle();
     for (int i = 0; i < handle->numFds; i++) {
         fds.emplace_back(handle->data[i]);
     }
 
-    return std::make_unique<V4L2Encoder::InputFrame>(std::move(fds), std::move(planes.value()),
-                                                     format, index, timestamp);
+    return std::make_unique<V4L2Encoder::InputFrame>(std::move(fds), planes, format, index,
+                                                     timestamp);
 }
 
 // Check whether the specified |profile| is an H.264 profile.
@@ -452,6 +444,8 @@ void V4L2EncodeComponent::stopTask(::base::WaitableEvent* done) {
     flush();
 
     mInputFormatConverter.reset();
+    mInputPixelFormat = VideoPixelFormat::UNKNOWN;
+    mInputLayout.clear();
 
     mEncoder.reset();
     mOutputBlockPool.reset();
@@ -494,6 +488,21 @@ void V4L2EncodeComponent::queueTask(std::unique_ptr<C2Work> work) {
     if (!mOutputBlockPool && !getBlockPool()) {
         reportError(C2_CORRUPTED);
         return;
+    }
+
+    // If this is the first input frame, determine the pixel format and layout.
+    if ((mInputPixelFormat == VideoPixelFormat::UNKNOWN) && !work->input.buffers.empty()) {
+        ALOG_ASSERT(mInputLayout.empty());
+        VideoPixelFormat format = VideoPixelFormat::UNKNOWN;
+        std::optional<std::vector<VideoFramePlane>> inputLayout = getVideoFrameLayout(
+                work->input.buffers.front()->data().graphicBlocks().front(), &format);
+        if (!inputLayout) {
+            ALOGE("Failed to get input block's layout");
+            reportError(C2_CORRUPTED);
+            return;
+        }
+        mInputPixelFormat = format;
+        mInputLayout = std::move(*inputLayout);
     }
 
     // If conversion is required but no free buffers are available we queue the work item.
@@ -754,6 +763,7 @@ bool V4L2EncodeComponent::updateEncodingParameters() {
 bool V4L2EncodeComponent::encode(C2ConstGraphicBlock block, uint64_t index, int64_t timestamp) {
     ALOGV("%s()", __func__);
     ALOG_ASSERT(mEncoderTaskRunner->RunsTasksInCurrentSequence());
+    ALOG_ASSERT((mInputPixelFormat != VideoPixelFormat::UNKNOWN) && !mInputLayout.empty());
     ALOG_ASSERT(mEncoder);
 
     ALOGV("Encoding input block (index: %" PRIu64 ", timestamp: %" PRId64 ", size: %dx%d)", index,
@@ -775,7 +785,8 @@ bool V4L2EncodeComponent::encode(C2ConstGraphicBlock block, uint64_t index, int6
     if (!updateEncodingParameters()) return false;
 
     // Create an input frame from the graphic block.
-    std::unique_ptr<V4L2Encoder::InputFrame> frame = CreateInputFrame(block, index, timestamp);
+    std::unique_ptr<V4L2Encoder::InputFrame> frame =
+            createInputFrame(block, mInputPixelFormat, mInputLayout, index, timestamp);
     if (!frame) {
         ALOGE("Failed to create video frame from input block (index: %" PRIu64
               ", timestamp: %" PRId64 ")",

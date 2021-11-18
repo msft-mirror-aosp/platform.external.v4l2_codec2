@@ -9,6 +9,7 @@
 #include <memory>
 #include <optional>
 #include <unordered_map>
+#include <vector>
 
 #include <C2Component.h>
 #include <C2ComponentFactory.h>
@@ -22,6 +23,8 @@
 #include <base/synchronization/waitable_event.h>
 #include <base/threading/thread.h>
 #include <util/C2InterfaceHelper.h>
+#include <v4l2_codec2/common/Common.h>
+#include <v4l2_codec2/common/VideoPixelFormat.h>
 
 namespace android {
 
@@ -152,6 +155,11 @@ private:
     std::queue<std::unique_ptr<C2Work>> mInputConverterQueue;
     // An input format convertor will be used if the device doesn't support the video's format.
     std::unique_ptr<FormatConverter> mInputFormatConverter;
+
+    // Pixel format of the input video frames, determined when the first input frame is queued.
+    VideoPixelFormat mInputPixelFormat = VideoPixelFormat::UNKNOWN;
+    // Layout of the input video frames, determined when the first input frame is queued.
+    std::vector<VideoFramePlane> mInputLayout;
 
     // The bitrate currently configured on the v4l2 device.
     uint32_t mBitrate = 0;
