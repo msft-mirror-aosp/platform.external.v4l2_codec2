@@ -503,6 +503,20 @@ void V4L2EncodeComponent::queueTask(std::unique_ptr<C2Work> work) {
         }
         mInputPixelFormat = format;
         mInputLayout = std::move(*inputLayout);
+
+        // Add an input format converter if the device doesn't support the requested input format.
+        if (mEncoder->inputFormat() != format) {
+            ALOGV("Creating input format convertor (%s)",
+                  videoPixelFormatToString(mEncoder->inputFormat()).c_str());
+            mInputFormatConverter =
+                    FormatConverter::create(mEncoder->inputFormat(), mEncoder->visibleSize(),
+                                            V4L2Encoder::kInputBufferCount, mEncoder->codedSize());
+            if (!mInputFormatConverter) {
+                ALOGE("Failed to created input format convertor");
+                reportError(C2_CORRUPTED);
+                return;
+            }
+        }
     }
 
     // If conversion is required but no free buffers are available we queue the work item.
@@ -681,17 +695,6 @@ bool V4L2EncodeComponent::initializeEncoder() {
             mEncoderTaskRunner);
     if (!mEncoder) {
         ALOGE("Failed to create V4L2Encoder (profile: %s)", profileToString(outputProfile));
-        return false;
-    }
-
-    // Add an input format convertor if the device doesn't support the requested input format.
-    ALOGV("Creating input format convertor (%s)",
-          videoPixelFormatToString(mEncoder->inputFormat()).c_str());
-    mInputFormatConverter =
-            FormatConverter::create(mEncoder->inputFormat(), mEncoder->visibleSize(),
-                                    V4L2Encoder::kInputBufferCount, mEncoder->codedSize());
-    if (!mInputFormatConverter) {
-        ALOGE("Failed to created input format convertor");
         return false;
     }
 
