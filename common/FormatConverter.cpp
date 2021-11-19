@@ -60,7 +60,7 @@ ImplDefinedToRGBXMap::~ImplDefinedToRGBXMap() {
 }
 
 // static
-std::unique_ptr<ImplDefinedToRGBXMap> ImplDefinedToRGBXMap::Create(
+std::unique_ptr<ImplDefinedToRGBXMap> ImplDefinedToRGBXMap::create(
         const C2ConstGraphicBlock& block) {
     uint32_t width, height, format, stride, igbpSlot, generation;
     uint64_t usage, igbpId;
@@ -92,7 +92,7 @@ std::unique_ptr<ImplDefinedToRGBXMap> ImplDefinedToRGBXMap::Create(
 }
 
 // static
-std::unique_ptr<FormatConverter> FormatConverter::Create(VideoPixelFormat outFormat,
+std::unique_ptr<FormatConverter> FormatConverter::create(VideoPixelFormat outFormat,
                                                          const ui::Size& visibleSize,
                                                          uint32_t inputCount,
                                                          const ui::Size& codedSize) {
@@ -195,7 +195,7 @@ c2_status_t FormatConverter::convertBlock(uint64_t frameIndex,
         // The above layout() cannot fill layout information and sets it to 0 instead if the input
         // format is IMPLEMENTATION_DEFINED and its backed format is RGB. We fill the layout by
         // using ImplDefinedToRGBXMap in this case.
-        idMap = ImplDefinedToRGBXMap::Create(inputBlock);
+        idMap = ImplDefinedToRGBXMap::create(inputBlock);
         if (!idMap) {
             ALOGE("Unable to parse RGBX_8888 from IMPLEMENTATION_DEFINED");
             return C2_CORRUPTED;

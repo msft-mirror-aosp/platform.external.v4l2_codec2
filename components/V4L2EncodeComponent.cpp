@@ -58,7 +58,7 @@ std::optional<std::vector<VideoFramePlane>> getVideoFrameLayout(const C2ConstGra
     // IMPLEMENTATION_DEFINED and its backed format is RGB. We fill the layout by using
     // ImplDefinedToRGBXMap in the case.
     if (layout.type == C2PlanarLayout::TYPE_UNKNOWN) {
-        std::unique_ptr<ImplDefinedToRGBXMap> idMap = ImplDefinedToRGBXMap::Create(block);
+        std::unique_ptr<ImplDefinedToRGBXMap> idMap = ImplDefinedToRGBXMap::create(block);
         if (idMap == nullptr) {
             ALOGE("Unable to parse RGBX_8888 from IMPLEMENTATION_DEFINED");
             return std::nullopt;
@@ -679,7 +679,7 @@ bool V4L2EncodeComponent::initializeEncoder() {
     ALOGV("Creating input format convertor (%s)",
           videoPixelFormatToString(mEncoder->inputFormat()).c_str());
     mInputFormatConverter =
-            FormatConverter::Create(mEncoder->inputFormat(), mEncoder->visibleSize(),
+            FormatConverter::create(mEncoder->inputFormat(), mEncoder->visibleSize(),
                                     V4L2Encoder::kInputBufferCount, mEncoder->codedSize());
     if (!mInputFormatConverter) {
         ALOGE("Failed to created input format convertor");

@@ -28,7 +28,7 @@ public:
     ~ImplDefinedToRGBXMap();
     ImplDefinedToRGBXMap() = delete;
 
-    static std::unique_ptr<ImplDefinedToRGBXMap> Create(const C2ConstGraphicBlock& block);
+    static std::unique_ptr<ImplDefinedToRGBXMap> create(const C2ConstGraphicBlock& block);
 
     const uint8_t* addr() const { return mAddr; }
     int offset() const { return 0; }
@@ -51,7 +51,7 @@ public:
 
     // Create FormatConverter instance and initialize it, nullptr will be returned on
     // initialization error.
-    static std::unique_ptr<FormatConverter> Create(VideoPixelFormat outFormat,
+    static std::unique_ptr<FormatConverter> create(VideoPixelFormat outFormat,
                                                    const ui::Size& visibleSize, uint32_t inputCount,
                                                    const ui::Size& codedSize);
 
