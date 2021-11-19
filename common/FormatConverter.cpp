@@ -206,6 +206,13 @@ c2_status_t FormatConverter::convertBlock(uint64_t frameIndex,
         inputLayout.type = C2PlanarLayout::TYPE_RGB;
     }
 
+    if (inputFormat == mOutFormat) {
+        ALOGV("Zero-Copy is applied");
+        mGraphicBlocks.emplace_back(new BlockEntry(frameIndex));
+        *convertedBlock = inputBlock;
+        return C2_OK;
+    }
+
     if (!isReady()) {
         ALOGV("There is no available block for conversion");
         return C2_NO_MEMORY;
@@ -232,13 +239,6 @@ c2_status_t FormatConverter::convertBlock(uint64_t frameIndex,
         const int srcStrideY = inputLayout.planes[C2PlanarLayout::PLANE_Y].rowInc;
         const int srcStrideU = inputLayout.planes[C2PlanarLayout::PLANE_U].rowInc;
         const int srcStrideV = inputLayout.planes[C2PlanarLayout::PLANE_V].rowInc;
-
-        if (inputFormat == mOutFormat) {
-            ALOGV("Zero-Copy is applied");
-            mGraphicBlocks.emplace_back(new BlockEntry(frameIndex));
-            *convertedBlock = inputBlock;
-            return C2_OK;
-        }
 
         switch (convertMap(inputFormat, mOutFormat)) {
         case convertMap(VideoPixelFormat::YV12, VideoPixelFormat::I420):
