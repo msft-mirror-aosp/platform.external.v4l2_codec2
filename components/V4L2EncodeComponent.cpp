@@ -490,22 +490,18 @@ void V4L2EncodeComponent::queueTask(std::unique_ptr<C2Work> work) {
         return;
     }
 
-    // If this is the first input frame, determine the pixel format and layout.
+    // If this is the first input frame, create an input format converter if the V4L2 device doesn't
+    // support the requested input format.
     if ((mInputPixelFormat == VideoPixelFormat::UNKNOWN) && !work->input.buffers.empty()) {
-        ALOG_ASSERT(mInputLayout.empty());
         VideoPixelFormat format = VideoPixelFormat::UNKNOWN;
-        std::optional<std::vector<VideoFramePlane>> inputLayout = getVideoFrameLayout(
-                work->input.buffers.front()->data().graphicBlocks().front(), &format);
-        if (!inputLayout) {
+        if (!getVideoFrameLayout(work->input.buffers.front()->data().graphicBlocks().front(),
+                                 &format)) {
             ALOGE("Failed to get input block's layout");
             reportError(C2_CORRUPTED);
             return;
         }
-        mInputPixelFormat = format;
-        mInputLayout = std::move(*inputLayout);
-
-        // Add an input format converter if the device doesn't support the requested input format.
         if (mEncoder->inputFormat() != format) {
+            ALOG_ASSERT(!mInputFormatConverter);
             ALOGV("Creating input format convertor (%s)",
                   videoPixelFormatToString(mEncoder->inputFormat()).c_str());
             mInputFormatConverter =
@@ -766,11 +762,25 @@ bool V4L2EncodeComponent::updateEncodingParameters() {
 bool V4L2EncodeComponent::encode(C2ConstGraphicBlock block, uint64_t index, int64_t timestamp) {
     ALOGV("%s()", __func__);
     ALOG_ASSERT(mEncoderTaskRunner->RunsTasksInCurrentSequence());
-    ALOG_ASSERT((mInputPixelFormat != VideoPixelFormat::UNKNOWN) && !mInputLayout.empty());
     ALOG_ASSERT(mEncoder);
 
     ALOGV("Encoding input block (index: %" PRIu64 ", timestamp: %" PRId64 ", size: %dx%d)", index,
           timestamp, block.width(), block.height());
+
+    // If this is the first input frame, determine the pixel format and layout.
+    if (mInputPixelFormat == VideoPixelFormat::UNKNOWN) {
+        ALOG_ASSERT(mInputLayout.empty());
+        VideoPixelFormat format = VideoPixelFormat::UNKNOWN;
+        std::optional<std::vector<VideoFramePlane>> inputLayout =
+                getVideoFrameLayout(block, &format);
+        if (!inputLayout) {
+            ALOGE("Failed to get input block's layout");
+            reportError(C2_CORRUPTED);
+            return false;
+        }
+        mInputPixelFormat = format;
+        mInputLayout = std::move(*inputLayout);
+    }
 
     // Dynamically adjust framerate based on the frame's timestamp if required.
     constexpr int64_t kMaxFramerateDiff = 5;

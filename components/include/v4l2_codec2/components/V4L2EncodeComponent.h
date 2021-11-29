@@ -156,9 +156,9 @@ private:
     // An input format convertor will be used if the device doesn't support the video's format.
     std::unique_ptr<FormatConverter> mInputFormatConverter;
 
-    // Pixel format of the input video frames, determined when the first input frame is queued.
+    // Pixel format of frames sent to V4L2 encoder, determined when the first input frame is queued.
     VideoPixelFormat mInputPixelFormat = VideoPixelFormat::UNKNOWN;
-    // Layout of the input video frames, determined when the first input frame is queued.
+    // Layout of frames sent to V4L2 encoder, determined when the first input frame is queued.
     std::vector<VideoFramePlane> mInputLayout;
 
     // The bitrate currently configured on the v4l2 device.
