@@ -181,6 +181,11 @@ bool V4L2Encoder::setFramerate(uint32_t framerate) {
     ALOGV("%s()", __func__);
     ALOG_ASSERT(mTaskRunner->RunsTasksInCurrentSequence());
 
+    if (framerate == 0) {
+        ALOGE("Requesting invalid framerate 0");
+        return false;
+    }
+
     struct v4l2_streamparm parms;
     memset(&parms, 0, sizeof(v4l2_streamparm));
     parms.type = V4L2_BUF_TYPE_VIDEO_OUTPUT_MPLANE;
