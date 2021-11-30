@@ -191,6 +191,8 @@ c2_status_t FormatConverter::convertBlock(uint64_t frameIndex,
                                   ? VideoPixelFormat::NV12
                                   : VideoPixelFormat::NV21;
         }
+    } else if (inputLayout.type == C2PlanarLayout::TYPE_RGB) {
+        inputFormat = VideoPixelFormat::ABGR;
     } else if (static_cast<uint32_t>(inputLayout.type) == 0u) {
         // The above layout() cannot fill layout information and sets it to 0 instead if the input
         // format is IMPLEMENTATION_DEFINED and its backed format is RGB. We fill the layout by
@@ -204,6 +206,9 @@ c2_status_t FormatConverter::convertBlock(uint64_t frameIndex,
         // BGRA_8888 is not used now?
         inputFormat = VideoPixelFormat::ABGR;
         inputLayout.type = C2PlanarLayout::TYPE_RGB;
+    } else {
+        ALOGE("Failed to determine input pixel format: %u", inputLayout.type);
+        return C2_CORRUPTED;
     }
 
     if (inputFormat == mOutFormat) {
