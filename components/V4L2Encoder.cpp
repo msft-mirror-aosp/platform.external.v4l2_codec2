@@ -768,28 +768,43 @@ bool V4L2Encoder::enqueueInputBuffer(std::unique_ptr<InputFrame> frame) {
              .tv_usec = static_cast<time_t>(timestamp % ::base::Time::kMicrosecondsPerSecond)});
     size_t bufferId = buffer->bufferId();
 
-    for (size_t i = 0; i < planes.size(); ++i) {
-        // Single-buffer input format may have multiple color planes, so bytesUsed of the single
-        // buffer should be sum of each color planes' size.
-        size_t bytesUsed = 0;
-        if (planes.size() == 1) {
-            bytesUsed = allocationSize(format, mInputLayout->mCodedSize);
-        } else {
-            bytesUsed = ::base::checked_cast<size_t>(
+    std::vector<int> fds = frame->fds();
+    if (mInputLayout->mMultiPlanar) {
+        // If the input format is multi-planar, then we need to submit one memory plane per color
+        // plane of our input frames.
+        for (size_t i = 0; i < planes.size(); ++i) {
+            size_t bytesUsed = ::base::checked_cast<size_t>(
                     getArea(planeSize(format, i, mInputLayout->mCodedSize)).value());
+
+            // TODO(crbug.com/901264): The way to pass an offset within a DMA-buf is not defined
+            // in V4L2 specification, so we abuse data_offset for now. Fix it when we have the
+            // right interface, including any necessary validation and potential alignment.
+            buffer->setPlaneDataOffset(i, planes[i].mOffset);
+            bytesUsed += planes[i].mOffset;
+            // Workaround: filling length should not be needed. This is a bug of videobuf2 library.
+            buffer->setPlaneSize(i, mInputLayout->mPlanes[i].mSize + planes[i].mOffset);
+            buffer->setPlaneBytesUsed(i, bytesUsed);
         }
+    } else {
+        ALOG_ASSERT(!planes.empty());
+        // If the input format is single-planar, then we only submit one buffer which contains
+        // all the color planes.
+        size_t bytesUsed = allocationSize(format, mInputLayout->mCodedSize);
 
         // TODO(crbug.com/901264): The way to pass an offset within a DMA-buf is not defined
         // in V4L2 specification, so we abuse data_offset for now. Fix it when we have the
         // right interface, including any necessary validation and potential alignment.
-        buffer->setPlaneDataOffset(i, planes[i].mOffset);
-        bytesUsed += planes[i].mOffset;
+        buffer->setPlaneDataOffset(0, planes[0].mOffset);
+        bytesUsed += planes[0].mOffset;
         // Workaround: filling length should not be needed. This is a bug of videobuf2 library.
-        buffer->setPlaneSize(i, mInputLayout->mPlanes[i].mSize + planes[i].mOffset);
-        buffer->setPlaneBytesUsed(i, bytesUsed);
+        buffer->setPlaneSize(0, bytesUsed);
+        buffer->setPlaneBytesUsed(0, bytesUsed);
+        // We only have one memory plane so we shall submit only one FD. The others are duplicates
+        // of the first one anyway.
+        fds.resize(1);
     }
 
-    if (!std::move(*buffer).queueDMABuf(frame->fds())) {
+    if (!std::move(*buffer).queueDMABuf(fds)) {
         ALOGE("Failed to queue input buffer using QueueDMABuf");
         onError();
         return false;
