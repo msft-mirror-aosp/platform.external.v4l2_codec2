@@ -750,7 +750,7 @@ bool V4L2Encoder::enqueueInputBuffer(std::unique_ptr<InputFrame> frame) {
     ALOG_ASSERT(mInputLayout->mPlanes.size() == frame->planes().size());
 
     auto format = frame->pixelFormat();
-    auto planes = frame->planes();
+    auto& planes = frame->planes();
     auto index = frame->index();
     auto timestamp = frame->timestamp();
 
