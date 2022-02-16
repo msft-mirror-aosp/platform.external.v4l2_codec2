@@ -9,7 +9,6 @@
 
 #include <stdint.h>
 
-#include <algorithm>
 #include <vector>
 
 #include <base/bind.h>
@@ -49,13 +48,12 @@ uint32_t VideoCodecToV4L2PixFmt(VideoCodec codec) {
 
 // static
 std::unique_ptr<VideoDecoder> V4L2Decoder::Create(
-        const VideoCodec& codec, const size_t inputBufferSize, const size_t minNumOutputBuffers,
-        GetPoolCB getPoolCb, OutputCB outputCb, ErrorCB errorCb,
-        scoped_refptr<::base::SequencedTaskRunner> taskRunner) {
+        const VideoCodec& codec, const size_t inputBufferSize, GetPoolCB getPoolCb,
+        OutputCB outputCb, ErrorCB errorCb, scoped_refptr<::base::SequencedTaskRunner> taskRunner) {
     std::unique_ptr<V4L2Decoder> decoder =
             ::base::WrapUnique<V4L2Decoder>(new V4L2Decoder(taskRunner));
-    if (!decoder->start(codec, inputBufferSize, minNumOutputBuffers, std::move(getPoolCb),
-                        std::move(outputCb), std::move(errorCb))) {
+    if (!decoder->start(codec, inputBufferSize, std::move(getPoolCb), std::move(outputCb),
+                        std::move(errorCb))) {
         return nullptr;
     }
     return decoder;
@@ -91,14 +89,12 @@ V4L2Decoder::~V4L2Decoder() {
     }
 }
 
-bool V4L2Decoder::start(const VideoCodec& codec, const size_t inputBufferSize,
-                        const size_t minNumOutputBuffers, GetPoolCB getPoolCb, OutputCB outputCb,
-                        ErrorCB errorCb) {
-    ALOGV("%s(codec=%s, inputBufferSize=%zu, minNumOutputBuffers=%zu)", __func__,
-          VideoCodecToString(codec), inputBufferSize, minNumOutputBuffers);
+bool V4L2Decoder::start(const VideoCodec& codec, const size_t inputBufferSize, GetPoolCB getPoolCb,
+                        OutputCB outputCb, ErrorCB errorCb) {
+    ALOGV("%s(codec=%s, inputBufferSize=%zu)", __func__, VideoCodecToString(codec),
+          inputBufferSize);
     ALOG_ASSERT(mTaskRunner->RunsTasksInCurrentSequence());
 
-    mMinNumOutputBuffers = minNumOutputBuffers;
     mGetPoolCb = std::move(getPoolCb);
     mOutputCb = std::move(outputCb);
     mErrorCb = std::move(errorCb);
@@ -192,7 +188,7 @@ bool V4L2Decoder::setupInputFormat(const uint32_t inputPixelFormat, const size_t
     return true;
 }
 
-void V4L2Decoder::decode(std::unique_ptr<ConstBitstreamBuffer> buffer, DecodeCB decodeCb) {
+void V4L2Decoder::decode(std::unique_ptr<BitstreamBuffer> buffer, DecodeCB decodeCb) {
     ALOGV("%s(id=%d)", __func__, buffer->id);
     ALOG_ASSERT(mTaskRunner->RunsTasksInCurrentSequence());
 
@@ -300,7 +296,7 @@ void V4L2Decoder::pumpDecodeRequest() {
         inputBuffer->setPlaneDataOffset(0, request.buffer->offset);
         inputBuffer->setPlaneBytesUsed(0, request.buffer->offset + request.buffer->size);
         std::vector<int> fds;
-        fds.push_back(std::move(request.buffer->dmabuf.handle()->data[0]));
+        fds.push_back(std::move(request.buffer->dmabuf_fd));
         if (!std::move(*inputBuffer).queueDMABuf(fds)) {
             ALOGE("%s(): Failed to QBUF to input queue, bitstreamId=%d", __func__, bitstreamId);
             onError();
@@ -334,7 +330,6 @@ void V4L2Decoder::flush() {
     }
 
     // Streamoff both V4L2 queues to drop input and output buffers.
-    const bool isOutputStreaming = mOutputQueue->isStreaming();
     mDevice->stopPolling();
     mOutputQueue->streamoff();
     mFrameAtDevice.clear();
@@ -342,9 +337,7 @@ void V4L2Decoder::flush() {
 
     // Streamon both V4L2 queues.
     mInputQueue->streamon();
-    if (isOutputStreaming) {
-        mOutputQueue->streamon();
-    }
+    mOutputQueue->streamon();
 
     // If there is no free buffer at mOutputQueue, tryFetchVideoFrame() should be triggerred after
     // a buffer is DQBUF from output queue. Now all the buffers are dropped at mOutputQueue, we
@@ -503,7 +496,6 @@ bool V4L2Decoder::changeResolution() {
     if (!format || !numOutputBuffers) {
         return false;
     }
-    *numOutputBuffers = std::max(*numOutputBuffers, mMinNumOutputBuffers);
 
     const ui::Size codedSize(format->fmt.pix_mp.width, format->fmt.pix_mp.height);
     if (!setupOutputFormat(codedSize)) {
@@ -529,13 +521,10 @@ bool V4L2Decoder::changeResolution() {
     mFrameAtDevice.clear();
     mBlockIdToV4L2Id.clear();
 
-    const size_t adjustedNumOutputBuffers =
-            mOutputQueue->allocateBuffers(*numOutputBuffers, V4L2_MEMORY_DMABUF);
-    if (adjustedNumOutputBuffers == 0) {
+    if (mOutputQueue->allocateBuffers(*numOutputBuffers, V4L2_MEMORY_DMABUF) == 0) {
         ALOGE("Failed to allocate output buffer.");
         return false;
     }
-    ALOGV("Allocated %zu output buffers.", adjustedNumOutputBuffers);
     if (!mOutputQueue->streamon()) {
         ALOGE("Failed to streamon output queue.");
         return false;
@@ -545,8 +534,7 @@ bool V4L2Decoder::changeResolution() {
     // exists at the same time.
     mVideoFramePool.reset();
     // Always use flexible pixel 420 format YCBCR_420_888 in Android.
-    mVideoFramePool =
-            mGetPoolCb.Run(mCodedSize, HalPixelFormat::YCBCR_420_888, adjustedNumOutputBuffers);
+    mVideoFramePool = mGetPoolCb.Run(mCodedSize, HalPixelFormat::YCBCR_420_888, *numOutputBuffers);
     if (!mVideoFramePool) {
         ALOGE("Failed to get block pool with size: %s", toString(mCodedSize).c_str());
         return false;
