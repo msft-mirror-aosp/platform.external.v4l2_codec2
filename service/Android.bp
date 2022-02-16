@@ -23,7 +23,7 @@ cc_binary {
 
     shared_libs: [
         "libv4l2_codec2_components",
-        "libavservices_minijail",
+        "libavservices_minijail_vendor",
         "libchrome",
         "libcutils",
         "libhidlbase",
