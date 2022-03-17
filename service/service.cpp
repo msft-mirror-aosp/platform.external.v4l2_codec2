@@ -30,7 +30,7 @@ int main(int /* argc */, char** /* argv */) {
 
     // Extra threads may be needed to handle a stacked IPC sequence that
     // contains alternating binder and hwbinder calls. (See b/35283480.)
-    android::hardware::configureRpcThreadpool(8, true /* callerWillJoin */);
+    android::hardware::configureRpcThreadpool(16, true /* callerWillJoin */);
 
 #if LOG_NDEBUG == 0
     ALOGD("Enable all verbose logging of libchrome");
