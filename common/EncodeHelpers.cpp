@@ -18,32 +18,6 @@
 
 namespace android {
 
-namespace {
-
-// Android frameworks needs 4 bytes start code.
-constexpr uint8_t kH264StartCode[] = {0x00, 0x00, 0x00, 0x01};
-constexpr size_t kH264StartCodeSize = 4;
-
-// Copy an H.264 NAL unit with size |srcSize| (without a start code) into a buffer with size
-// |dstSize|. An H.264 start code is prepended to the NAL unit. After copying |dst| is adjusted to
-// point to the address immediately following the copied data, and the |dstSize| is updated to
-// reflect the remaining destination buffer size.
-bool copyNALUPrependingStartCode(const uint8_t* src, size_t srcSize, uint8_t** dst,
-                                 size_t* dstSize) {
-    size_t naluSize = srcSize + kH264StartCodeSize;
-    if (naluSize > *dstSize) {
-        ALOGE("Couldn't copy NAL unit, not enough space in destination buffer");
-        return false;
-    }
-    memcpy(*dst, kH264StartCode, kH264StartCodeSize);
-    memcpy(*dst + kH264StartCodeSize, src, srcSize);
-    *dst += naluSize;
-    *dstSize -= naluSize;
-    return true;
-}
-
-}  // namespace
-
 uint8_t c2LevelToV4L2Level(C2Config::level_t level) {
     switch (level) {
     case C2Config::LEVEL_AVC_1:
@@ -110,101 +84,41 @@ android_ycbcr getGraphicBlockInfo(const C2ConstGraphicBlock& block) {
     return ycbcr;
 }
 
-bool extractSPSPPS(const uint8_t* data, size_t length, std::vector<uint8_t>* sps,
-                   std::vector<uint8_t>* pps) {
-    bool foundSPS = false;
-    bool foundPPS = false;
-    NalParser parser(data, length);
-    while (!(foundSPS && foundPPS) && parser.locateNextNal()) {
-        switch (parser.type()) {
-        case NalParser::kSPSType:
-            sps->resize(parser.length());
-            memcpy(sps->data(), parser.data(), parser.length());
-            foundSPS = true;
-            break;
-        case NalParser::kPPSType:
-            pps->resize(parser.length());
-            memcpy(pps->data(), parser.data(), parser.length());
-            foundPPS = true;
-            break;
-        }
-    }
-    return foundSPS && foundPPS;
-}
-
-bool extractCSDInfo(std::unique_ptr<C2StreamInitDataInfo::output>* const csd, const uint8_t* data,
+void extractCSDInfo(std::unique_ptr<C2StreamInitDataInfo::output>* const csd, const uint8_t* data,
                     size_t length) {
+    // Android frameworks needs 4 bytes start code.
+    constexpr uint8_t kStartCode[] = {0x00, 0x00, 0x00, 0x01};
+    constexpr int kStartCodeLength = 4;
+
     csd->reset();
 
-    std::vector<uint8_t> sps;
-    std::vector<uint8_t> pps;
-    if (!extractSPSPPS(data, length, &sps, &pps)) {
-        return false;
-    }
+    // Temporarily allocate a byte array to copy codec config data. This should be freed after
+    // codec config data extraction is done.
+    auto tmpConfigData = std::make_unique<uint8_t[]>(length);
+    uint8_t* tmpOutput = tmpConfigData.get();
+    uint8_t* tmpConfigDataEnd = tmpOutput + length;
 
-    size_t configDataLength = sps.size() + pps.size() + (2u * kH264StartCodeSize);
-    ALOGV("Extracted codec config data: length=%zu", configDataLength);
-
-    *csd = C2StreamInitDataInfo::output::AllocUnique(configDataLength, 0u);
-    uint8_t* csdBuffer = (*csd)->m.value;
-    return copyNALUPrependingStartCode(sps.data(), sps.size(), &csdBuffer, &configDataLength) &&
-           copyNALUPrependingStartCode(pps.data(), pps.size(), &csdBuffer, &configDataLength);
-}
-
-size_t prependSPSPPSToIDR(const uint8_t* src, size_t srcSize, uint8_t* dst, size_t dstSize,
-                          std::vector<uint8_t>* sps, std::vector<uint8_t>* pps) {
-    bool foundStreamParams = false;
-    size_t remainingDstSize = dstSize;
-    NalParser parser(src, srcSize);
+    NalParser parser(data, length);
     while (parser.locateNextNal()) {
-        switch (parser.type()) {
-        case NalParser::kSPSType:
-            // SPS found, copy to cache.
-            ALOGV("Found SPS (length %zu)", parser.length());
-            sps->resize(parser.length());
-            memcpy(sps->data(), parser.data(), parser.length());
-            foundStreamParams = true;
-            break;
-        case NalParser::kPPSType:
-            // PPS found, copy to cache.
-            ALOGV("Found PPS (length %zu)", parser.length());
-            pps->resize(parser.length());
-            memcpy(pps->data(), parser.data(), parser.length());
-            foundStreamParams = true;
-            break;
-        case NalParser::kIDRType:
-            ALOGV("Found IDR (length %zu)", parser.length());
-            if (foundStreamParams) {
-                ALOGV("Not injecting SPS and PPS before IDR, already present");
-                break;
-            }
+        if (parser.length() == 0) continue;
+        uint8_t nalType = parser.type();
+        ALOGV("find next NAL: type=%d, length=%zu", nalType, parser.length());
+        if (nalType != NalParser::kSPSType && nalType != NalParser::kPPSType) continue;
 
-            // Prepend the cached SPS and PPS to the IDR NAL unit.
-            if (sps->empty() || pps->empty()) {
-                ALOGE("No cached SPS or PPS NAL unit available to inject before IDR");
-                return 0;
-            }
-            if (!copyNALUPrependingStartCode(sps->data(), sps->size(), &dst, &remainingDstSize)) {
-                ALOGE("Not enough space to inject SPS NAL unit before IDR");
-                return 0;
-            }
-            if (!copyNALUPrependingStartCode(pps->data(), pps->size(), &dst, &remainingDstSize)) {
-                ALOGE("Not enough space to inject PPS NAL unit before IDR");
-                return 0;
-            }
-
-            ALOGV("Stream header injected before IDR");
-            break;
+        if (tmpOutput + kStartCodeLength + parser.length() > tmpConfigDataEnd) {
+            ALOGE("Buffer overflow on extracting codec config data (length=%zu)", length);
+            return;
         }
-
-        // Copy the NAL unit to the new output buffer.
-        if (!copyNALUPrependingStartCode(parser.data(), parser.length(), &dst, &remainingDstSize)) {
-            ALOGE("NAL unit does not fit in the provided output buffer");
-            return 0;
-        }
+        std::memcpy(tmpOutput, kStartCode, kStartCodeLength);
+        tmpOutput += kStartCodeLength;
+        std::memcpy(tmpOutput, parser.data(), parser.length());
+        tmpOutput += parser.length();
     }
 
-    return dstSize - remainingDstSize;
+    size_t configDataLength = tmpOutput - tmpConfigData.get();
+    ALOGV("Extracted codec config data: length=%zu", configDataLength);
+    *csd = C2StreamInitDataInfo::output::AllocUnique(configDataLength, 0u);
+    std::memcpy((*csd)->m.value, tmpConfigData.get(), configDataLength);
 }
 
 }  // namespace android
