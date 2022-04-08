@@ -9,7 +9,7 @@
 
 #include "video_frame.h"
 
-#include <log/log.h>
+#include <utils/Log.h>
 
 namespace android {
 

@@ -10,7 +10,7 @@
 #include <sstream>
 
 #include <android/native_window_jni.h>
-#include <log/log.h>
+#include <utils/Log.h>
 
 #include "e2e_test_jni.h"
 #include "mediacodec_decoder.h"
@@ -25,10 +25,10 @@ public:
 
     static constexpr char* kClassName = "org/chromium/c2/test/E2eTestActivity";
 
-    void OnCodecReady(void* codec) override {
+    void OnDecoderReady(void* decoder) override {
         jclass cls = env_->FindClass(kClassName);
-        jmethodID methodid = env_->GetMethodID(cls, "onCodecReady", "(J)V");
-        env_->CallVoidMethod(thiz_, methodid, (jlong)codec);
+        jmethodID methodid = env_->GetMethodID(cls, "onDecoderReady", "(J)V");
+        env_->CallVoidMethod(thiz_, methodid, (jlong)decoder);
     }
 
     void OnSizeChanged(int width, int height) override {
@@ -78,10 +78,10 @@ JNIEXPORT jint JNICALL Java_org_chromium_c2_test_E2eTestActivity_c2VideoTest(
     ANativeWindow* native_window = ANativeWindow_fromSurface(env, surface);
 
     int res;
-    JniConfigureCallback cb(env, thiz);
     if (encode) {
-        res = RunEncoderTests(final_args, test_args_count + 1, &cb);
+        res = RunEncoderTests(final_args, test_args_count + 1);
     } else {
+        JniConfigureCallback cb(env, thiz);
         res = RunDecoderTests(final_args, test_args_count + 1, native_window, &cb);
     }
     delete[] final_args;

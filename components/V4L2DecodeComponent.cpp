@@ -20,12 +20,10 @@
 #include <base/bind.h>
 #include <base/callback_helpers.h>
 #include <base/time/time.h>
-#include <cutils/properties.h>
 #include <log/log.h>
 #include <media/stagefright/foundation/ColorUtils.h>
 
-#include <v4l2_codec2/common/Common.h>
-#include <v4l2_codec2/common/NalParser.h>
+#include <h264_parser.h>
 #include <v4l2_codec2/common/VideoTypes.h>
 #include <v4l2_codec2/components/BitstreamBuffer.h>
 #include <v4l2_codec2/components/V4L2Decoder.h>
@@ -34,6 +32,8 @@
 
 namespace android {
 namespace {
+// TODO(b/151128291): figure out why we cannot open V4L2Device in 0.5 second?
+const ::base::TimeDelta kBlockingMethodTimeout = ::base::TimeDelta::FromMilliseconds(5000);
 
 // Mask against 30 bits to avoid (undefined) wraparound on signed integer.
 int32_t frameIndexToBitstreamId(c2_cntr64_t frameIndex) {
@@ -43,23 +43,44 @@ int32_t frameIndexToBitstreamId(c2_cntr64_t frameIndex) {
 bool parseCodedColorAspects(const C2ConstLinearBlock& input,
                             C2StreamColorAspectsInfo::input* codedAspects) {
     C2ReadView view = input.map().get();
-    NalParser parser(view.data(), view.capacity());
+    const uint8_t* data = view.data();
+    const uint32_t size = view.capacity();
 
-    if (!parser.locateSPS()) {
-        ALOGV("Couldn't find SPS");
+    std::unique_ptr<media::H264Parser> h264Parser = std::make_unique<media::H264Parser>();
+    h264Parser->SetStream(data, static_cast<off_t>(size));
+    media::H264NALU nalu;
+    media::H264Parser::Result parRes = h264Parser->AdvanceToNextNALU(&nalu);
+    if (parRes != media::H264Parser::kEOStream && parRes != media::H264Parser::kOk) {
+        ALOGE("H264 AdvanceToNextNALU error: %d", static_cast<int>(parRes));
+        return false;
+    }
+    if (nalu.nal_unit_type != media::H264NALU::kSPS) {
+        ALOGV("NALU is not SPS");
         return false;
     }
 
-    NalParser::ColorAspects aspects;
-    if (!parser.findCodedColorAspects(&aspects)) {
-        ALOGV("Couldn't find color description in SPS");
+    int spsId;
+    parRes = h264Parser->ParseSPS(&spsId);
+    if (parRes != media::H264Parser::kEOStream && parRes != media::H264Parser::kOk) {
+        ALOGE("H264 ParseSPS error: %d", static_cast<int>(parRes));
         return false;
     }
+
+    // Parse ISO color aspects from H264 SPS bitstream.
+    const media::H264SPS* sps = h264Parser->GetSPS(spsId);
+    if (!sps->colour_description_present_flag) {
+        ALOGV("No Color Description in SPS");
+        return false;
+    }
+    int32_t primaries = sps->colour_primaries;
+    int32_t transfer = sps->transfer_characteristics;
+    int32_t coeffs = sps->matrix_coefficients;
+    bool fullRange = sps->video_full_range_flag;
 
     // Convert ISO color aspects to ColorUtils::ColorAspects.
     ColorAspects colorAspects;
-    ColorUtils::convertIsoColorAspectsToCodecAspects(
-            aspects.primaries, aspects.transfer, aspects.coeffs, aspects.fullRange, colorAspects);
+    ColorUtils::convertIsoColorAspectsToCodecAspects(primaries, transfer, coeffs, fullRange,
+                                                     colorAspects);
     ALOGV("Parsed ColorAspects from bitstream: (R:%d, P:%d, M:%d, T:%d)", colorAspects.mRange,
           colorAspects.mPrimaries, colorAspects.mMatrixCoeffs, colorAspects.mTransfer);
 
@@ -117,23 +138,9 @@ bool isNoShowFrameWork(const C2Work& work, const C2WorkOrdinalStruct& currOrdina
 }  // namespace
 
 // static
-std::atomic<int32_t> V4L2DecodeComponent::sConcurrentInstances = 0;
-
-// static
 std::shared_ptr<C2Component> V4L2DecodeComponent::create(
         const std::string& name, c2_node_id_t id, const std::shared_ptr<C2ReflectorHelper>& helper,
         C2ComponentFactory::ComponentDeleter deleter) {
-    static const int32_t kMaxConcurrentInstances =
-            property_get_int32("debug.v4l2_codec2.decode.concurrent-instances", -1);
-    static std::mutex mutex;
-
-    std::lock_guard<std::mutex> lock(mutex);
-
-    if (kMaxConcurrentInstances >= 0 && sConcurrentInstances.load() >= kMaxConcurrentInstances) {
-        ALOGW("Reject to Initialize() due to too many instances: %d", sConcurrentInstances.load());
-        return nullptr;
-    }
-
     auto intfImpl = std::make_shared<V4L2DecodeInterface>(name, helper);
     if (intfImpl->status() != C2_OK) {
         ALOGE("Failed to initialize V4L2DecodeInterface.");
@@ -151,17 +158,26 @@ V4L2DecodeComponent::V4L2DecodeComponent(const std::string& name, c2_node_id_t i
         mIntf(std::make_shared<SimpleInterface<V4L2DecodeInterface>>(name.c_str(), id, mIntfImpl)) {
     ALOGV("%s(%s)", __func__, name.c_str());
 
-    sConcurrentInstances.fetch_add(1, std::memory_order_relaxed);
     mIsSecure = name.find(".secure") != std::string::npos;
 }
 
 V4L2DecodeComponent::~V4L2DecodeComponent() {
     ALOGV("%s()", __func__);
 
-    release();
-
-    sConcurrentInstances.fetch_sub(1, std::memory_order_relaxed);
+    if (mDecoderThread.IsRunning()) {
+        mDecoderTaskRunner->PostTask(
+                FROM_HERE, ::base::BindOnce(&V4L2DecodeComponent::destroyTask, mWeakThis));
+        mDecoderThread.Stop();
+    }
     ALOGV("%s() done", __func__);
+}
+
+void V4L2DecodeComponent::destroyTask() {
+    ALOGV("%s()", __func__);
+    ALOG_ASSERT(mDecoderTaskRunner->RunsTasksInCurrentSequence());
+
+    mWeakThisFactory.InvalidateWeakPtrs();
+    mDecoder = nullptr;
 }
 
 c2_status_t V4L2DecodeComponent::start() {
@@ -180,25 +196,27 @@ c2_status_t V4L2DecodeComponent::start() {
     }
     mDecoderTaskRunner = mDecoderThread.task_runner();
     mWeakThis = mWeakThisFactory.GetWeakPtr();
-    mStdWeakThis = weak_from_this();
 
     c2_status_t status = C2_CORRUPTED;
-    ::base::WaitableEvent done;
-    mDecoderTaskRunner->PostTask(
-            FROM_HERE, ::base::BindOnce(&V4L2DecodeComponent::startTask, mWeakThis,
-                                        ::base::Unretained(&status), ::base::Unretained(&done)));
-    done.Wait();
+    mStartStopDone.Reset();
+    mDecoderTaskRunner->PostTask(FROM_HERE,
+                                 ::base::BindOnce(&V4L2DecodeComponent::startTask, mWeakThis,
+                                                  ::base::Unretained(&status)));
+    if (!mStartStopDone.TimedWait(kBlockingMethodTimeout)) {
+        ALOGE("startTask() timeout...");
+        return C2_TIMED_OUT;
+    }
 
     if (status == C2_OK) mComponentState.store(ComponentState::RUNNING);
     return status;
 }
 
-void V4L2DecodeComponent::startTask(c2_status_t* status, ::base::WaitableEvent* done) {
+void V4L2DecodeComponent::startTask(c2_status_t* status) {
     ALOGV("%s()", __func__);
     ALOG_ASSERT(mDecoderTaskRunner->RunsTasksInCurrentSequence());
 
     ::base::ScopedClosureRunner done_caller(
-            ::base::BindOnce(&::base::WaitableEvent::Signal, ::base::Unretained(done)));
+            ::base::BindOnce(&::base::WaitableEvent::Signal, ::base::Unretained(&mStartStopDone)));
     *status = C2_CORRUPTED;
 
     const auto codec = mIntfImpl->getVideoCodec();
@@ -207,16 +225,12 @@ void V4L2DecodeComponent::startTask(c2_status_t* status, ::base::WaitableEvent* 
         return;
     }
     const size_t inputBufferSize = mIntfImpl->getInputBufferSize();
-    // ::base::Unretained(this) is safe here because |mDecoder| is always destroyed before
-    // |mDecoderThread| is stopped, so |*this| is always valid during |mDecoder|'s lifetime.
-    mDecoder = V4L2Decoder::Create(*codec, inputBufferSize,
-                                   ::base::BindRepeating(&V4L2DecodeComponent::getVideoFramePool,
-                                                         ::base::Unretained(this)),
-                                   ::base::BindRepeating(&V4L2DecodeComponent::onOutputFrameReady,
-                                                         ::base::Unretained(this)),
-                                   ::base::BindRepeating(&V4L2DecodeComponent::reportError,
-                                                         ::base::Unretained(this), C2_CORRUPTED),
-                                   mDecoderTaskRunner);
+    mDecoder = V4L2Decoder::Create(
+            *codec, inputBufferSize,
+            ::base::BindRepeating(&V4L2DecodeComponent::getVideoFramePool, mWeakThis),
+            ::base::BindRepeating(&V4L2DecodeComponent::onOutputFrameReady, mWeakThis),
+            ::base::BindRepeating(&V4L2DecodeComponent::reportError, mWeakThis, C2_CORRUPTED),
+            mDecoderTaskRunner);
     if (!mDecoder) {
         ALOGE("Failed to create V4L2Decoder for %s", VideoCodecToString(*codec));
         return;
@@ -231,40 +245,36 @@ void V4L2DecodeComponent::startTask(c2_status_t* status, ::base::WaitableEvent* 
     *status = C2_OK;
 }
 
-std::unique_ptr<VideoFramePool> V4L2DecodeComponent::getVideoFramePool(const ui::Size& size,
-                                                                       HalPixelFormat pixelFormat,
-                                                                       size_t numBuffers) {
+void V4L2DecodeComponent::getVideoFramePool(std::unique_ptr<VideoFramePool>* pool,
+                                            const media::Size& size, HalPixelFormat pixelFormat,
+                                            size_t numBuffers) {
     ALOGV("%s()", __func__);
     ALOG_ASSERT(mDecoderTaskRunner->RunsTasksInCurrentSequence());
 
-    auto sharedThis = mStdWeakThis.lock();
-    if (sharedThis == nullptr) {
-        ALOGE("%s(): V4L2DecodeComponent instance is destroyed.", __func__);
-        return nullptr;
-    }
-
     // (b/157113946): Prevent malicious dynamic resolution change exhausts system memory.
     constexpr int kMaximumSupportedArea = 4096 * 4096;
-    if (getArea(size).value_or(INT_MAX) > kMaximumSupportedArea) {
-        ALOGE("The output size (%dx%d) is larger than supported size (4096x4096)", size.width,
-              size.height);
+    if (size.width() * size.height() > kMaximumSupportedArea) {
+        ALOGE("The output size (%dx%d) is larger than supported size (4096x4096)", size.width(),
+              size.height());
         reportError(C2_BAD_VALUE);
-        return nullptr;
+        *pool = nullptr;
+        return;
     }
 
     // Get block pool ID configured from the client.
     auto poolId = mIntfImpl->getBlockPoolId();
     ALOGI("Using C2BlockPool ID = %" PRIu64 " for allocating output buffers", poolId);
     std::shared_ptr<C2BlockPool> blockPool;
-    auto status = GetCodec2BlockPool(poolId, std::move(sharedThis), &blockPool);
+    auto status = GetCodec2BlockPool(poolId, shared_from_this(), &blockPool);
     if (status != C2_OK) {
         ALOGE("Graphic block allocator is invalid: %d", status);
         reportError(status);
-        return nullptr;
+        *pool = nullptr;
+        return;
     }
 
-    return VideoFramePool::Create(std::move(blockPool), numBuffers, size, pixelFormat, mIsSecure,
-                                  mDecoderTaskRunner);
+    *pool = VideoFramePool::Create(std::move(blockPool), numBuffers, size, pixelFormat, mIsSecure,
+                                   mDecoderTaskRunner);
 }
 
 c2_status_t V4L2DecodeComponent::stop() {
@@ -277,13 +287,19 @@ c2_status_t V4L2DecodeComponent::stop() {
         return C2_BAD_STATE;
     }
 
-    if (mDecoderThread.IsRunning()) {
-        mDecoderTaskRunner->PostTask(FROM_HERE,
-                                     ::base::BindOnce(&V4L2DecodeComponent::stopTask, mWeakThis));
-        mDecoderThread.Stop();
-        mDecoderTaskRunner = nullptr;
+    // Return immediately if the component is already stopped.
+    if (!mDecoderThread.IsRunning()) return C2_OK;
+
+    mStartStopDone.Reset();
+    mDecoderTaskRunner->PostTask(FROM_HERE,
+                                 ::base::BindOnce(&V4L2DecodeComponent::stopTask, mWeakThis));
+    if (!mStartStopDone.TimedWait(kBlockingMethodTimeout)) {
+        ALOGE("stopTask() timeout...");
+        return C2_TIMED_OUT;
     }
 
+    mDecoderThread.Stop();
+    mDecoderTaskRunner = nullptr;
     mComponentState.store(ComponentState::STOPPED);
     return C2_OK;
 }
@@ -294,38 +310,10 @@ void V4L2DecodeComponent::stopTask() {
 
     reportAbandonedWorks();
     mIsDraining = false;
-
-    releaseTask();
-}
-
-c2_status_t V4L2DecodeComponent::reset() {
-    ALOGV("%s()", __func__);
-
-    return stop();
-}
-
-c2_status_t V4L2DecodeComponent::release() {
-    ALOGV("%s()", __func__);
-    std::lock_guard<std::mutex> lock(mStartStopLock);
-
-    if (mDecoderThread.IsRunning()) {
-        mDecoderTaskRunner->PostTask(
-                FROM_HERE, ::base::BindOnce(&V4L2DecodeComponent::releaseTask, mWeakThis));
-        mDecoderThread.Stop();
-        mDecoderTaskRunner = nullptr;
-    }
-
-    mComponentState.store(ComponentState::RELEASED);
-    return C2_OK;
-}
-
-void V4L2DecodeComponent::releaseTask() {
-    ALOGV("%s()", __func__);
-    ALOG_ASSERT(mDecoderTaskRunner->RunsTasksInCurrentSequence());
-
-    mWeakThisFactory.InvalidateWeakPtrs();
-    mStdWeakThis.reset();
     mDecoder = nullptr;
+    mWeakThisFactory.InvalidateWeakPtrs();
+
+    mStartStopDone.Signal();
 }
 
 c2_status_t V4L2DecodeComponent::setListener_vb(
@@ -430,21 +418,16 @@ void V4L2DecodeComponent::pumpPendingWorks() {
     }
 
     while (!mPendingWorks.empty() && !mIsDraining) {
-        std::unique_ptr<C2Work> pendingWork(std::move(mPendingWorks.front()));
+        std::unique_ptr<C2Work> work(std::move(mPendingWorks.front()));
         mPendingWorks.pop();
 
-        const int32_t bitstreamId = frameIndexToBitstreamId(pendingWork->input.ordinal.frameIndex);
-        const bool isCSDWork = pendingWork->input.flags & C2FrameData::FLAG_CODEC_CONFIG;
-        const bool isEmptyWork = pendingWork->input.buffers.front() == nullptr;
-        const bool isEOSWork = pendingWork->input.flags & C2FrameData::FLAG_END_OF_STREAM;
-        const C2Work* work = pendingWork.get();
+        const int32_t bitstreamId = frameIndexToBitstreamId(work->input.ordinal.frameIndex);
+        const bool isCSDWork = work->input.flags & C2FrameData::FLAG_CODEC_CONFIG;
+        const bool isEmptyWork = work->input.buffers.front() == nullptr;
         ALOGV("Process C2Work bitstreamId=%d isCSDWork=%d, isEmptyWork=%d", bitstreamId, isCSDWork,
               isEmptyWork);
 
-        auto res = mWorksAtDecoder.insert(std::make_pair(bitstreamId, std::move(pendingWork)));
-        ALOGW_IF(!res.second, "We already inserted bitstreamId %d to decoder?", bitstreamId);
-
-        if (!isEmptyWork) {
+        if (work->input.buffers.front() != nullptr) {
             // If input.buffers is not empty, the buffer should have meaningful content inside.
             C2ConstLinearBlock linearBlock =
                     work->input.buffers.front()->data().linearBlocks().front();
@@ -481,10 +464,13 @@ void V4L2DecodeComponent::pumpPendingWorks() {
                                                                  mWeakThis, bitstreamId));
         }
 
-        if (isEOSWork) {
+        if (work->input.flags & C2FrameData::FLAG_END_OF_STREAM) {
             mDecoder->drain(::base::BindOnce(&V4L2DecodeComponent::onDrainDone, mWeakThis));
             mIsDraining = true;
         }
+
+        auto res = mWorksAtDecoder.insert(std::make_pair(bitstreamId, std::move(work)));
+        ALOGW_IF(!res.second, "We already inserted bitstreamId %d to decoder?", bitstreamId);
 
         // Directly report the empty CSD work as finished.
         if (isCSDWork && isEmptyWork) reportWorkIfFinished(bitstreamId);
@@ -496,18 +482,8 @@ void V4L2DecodeComponent::onDecodeDone(int32_t bitstreamId, VideoDecoder::Decode
           VideoDecoder::DecodeStatusToString(status));
     ALOG_ASSERT(mDecoderTaskRunner->RunsTasksInCurrentSequence());
 
-    auto it = mWorksAtDecoder.find(bitstreamId);
-    ALOG_ASSERT(it != mWorksAtDecoder.end());
-    C2Work* work = it->second.get();
-
     switch (status) {
     case VideoDecoder::DecodeStatus::kAborted:
-        work->input.buffers.front().reset();
-        work->worklets.front()->output.flags = static_cast<C2FrameData::flags_t>(
-                work->worklets.front()->output.flags & C2FrameData::FLAG_DROP_FRAME);
-        mOutputBitstreamIds.push(bitstreamId);
-
-        pumpReportWork();
         return;
 
     case VideoDecoder::DecodeStatus::kError:
@@ -515,6 +491,10 @@ void V4L2DecodeComponent::onDecodeDone(int32_t bitstreamId, VideoDecoder::Decode
         return;
 
     case VideoDecoder::DecodeStatus::kOk:
+        auto it = mWorksAtDecoder.find(bitstreamId);
+        ALOG_ASSERT(it != mWorksAtDecoder.end());
+        C2Work* work = it->second.get();
+
         // Release the input buffer.
         work->input.buffers.front().reset();
 
@@ -542,6 +522,9 @@ void V4L2DecodeComponent::onOutputFrameReady(std::unique_ptr<VideoFrame> frame) 
     C2Work* work = it->second.get();
 
     C2ConstGraphicBlock constBlock = std::move(frame)->getGraphicBlock();
+    // TODO(b/160307705): Consider to remove the dependency of C2VdaBqBlockPool.
+    MarkBlockPoolDataAsShared(constBlock);
+
     std::shared_ptr<C2Buffer> buffer = C2Buffer::CreateGraphicBuffer(std::move(constBlock));
     if (mPendingColorAspectsChange &&
         work->input.ordinal.frameIndex.peeku() >= mPendingColorAspectsChangeFrameIndex) {
@@ -614,10 +597,7 @@ bool V4L2DecodeComponent::reportWorkIfFinished(int32_t bitstreamId) {
     }
 
     auto it = mWorksAtDecoder.find(bitstreamId);
-    if (it == mWorksAtDecoder.end()) {
-        ALOGI("work(bitstreamId = %d) is dropped, skip.", bitstreamId);
-        return true;
-    }
+    ALOG_ASSERT(it != mWorksAtDecoder.end());
 
     if (!isWorkDone(*(it->second))) {
         ALOGV("work(bitstreamId = %d) is not done yet.", bitstreamId);
@@ -641,32 +621,24 @@ bool V4L2DecodeComponent::reportEOSWork() {
     ALOGV("%s()", __func__);
     ALOG_ASSERT(mDecoderTaskRunner->RunsTasksInCurrentSequence());
 
-    const auto it =
-            std::find_if(mWorksAtDecoder.begin(), mWorksAtDecoder.end(), [](const auto& kv) {
-                return kv.second->input.flags & C2FrameData::FLAG_END_OF_STREAM;
-            });
-    if (it == mWorksAtDecoder.end()) {
-        ALOGE("Failed to find EOS work.");
+    // In this moment all works prior to EOS work should be done and returned to listener.
+    if (mWorksAtDecoder.size() != 1u) {
+        ALOGE("It shouldn't have remaining works in mWorksAtDecoder except EOS work.");
+        for (const auto& kv : mWorksAtDecoder) {
+            ALOGE("bitstreamId(%d) => Work index=%llu, timestamp=%llu", kv.first,
+                  kv.second->input.ordinal.frameIndex.peekull(),
+                  kv.second->input.ordinal.timestamp.peekull());
+        }
         return false;
     }
 
-    std::unique_ptr<C2Work> eosWork(std::move(it->second));
-    mWorksAtDecoder.erase(it);
+    std::unique_ptr<C2Work> eosWork(std::move(mWorksAtDecoder.begin()->second));
+    mWorksAtDecoder.clear();
 
     eosWork->result = C2_OK;
     eosWork->workletsProcessed = static_cast<uint32_t>(eosWork->worklets.size());
     eosWork->worklets.front()->output.flags = C2FrameData::FLAG_END_OF_STREAM;
     if (!eosWork->input.buffers.empty()) eosWork->input.buffers.front().reset();
-
-    if (!mWorksAtDecoder.empty()) {
-        ALOGW("There are remaining works except EOS work. abandon them.");
-        for (const auto& kv : mWorksAtDecoder) {
-            ALOGW("bitstreamId(%d) => Work index=%llu, timestamp=%llu", kv.first,
-                  kv.second->input.ordinal.frameIndex.peekull(),
-                  kv.second->input.ordinal.timestamp.peekull());
-        }
-        reportAbandonedWorks();
-    }
 
     return reportWork(std::move(eosWork));
 }
@@ -675,12 +647,6 @@ bool V4L2DecodeComponent::reportWork(std::unique_ptr<C2Work> work) {
     ALOGV("%s(work=%llu)", __func__, work->input.ordinal.frameIndex.peekull());
     ALOG_ASSERT(mDecoderTaskRunner->RunsTasksInCurrentSequence());
 
-    auto sharedThis = mStdWeakThis.lock();
-    if (sharedThis == nullptr) {
-        ALOGE("%s(): V4L2DecodeComponent instance is destroyed.", __func__);
-        return false;
-    }
-
     if (!mListener) {
         ALOGE("mListener is nullptr, setListener_vb() not called?");
         return false;
@@ -688,7 +654,7 @@ bool V4L2DecodeComponent::reportWork(std::unique_ptr<C2Work> work) {
 
     std::list<std::unique_ptr<C2Work>> finishedWorks;
     finishedWorks.emplace_back(std::move(work));
-    mListener->onWorkDone_nb(std::move(sharedThis), std::move(finishedWorks));
+    mListener->onWorkDone_nb(shared_from_this(), std::move(finishedWorks));
     return true;
 }
 
@@ -725,12 +691,6 @@ void V4L2DecodeComponent::reportAbandonedWorks() {
     ALOGV("%s()", __func__);
     ALOG_ASSERT(mDecoderTaskRunner->RunsTasksInCurrentSequence());
 
-    auto sharedThis = mStdWeakThis.lock();
-    if (sharedThis == nullptr) {
-        ALOGE("%s(): V4L2DecodeComponent instance is destroyed.", __func__);
-        return;
-    }
-
     std::list<std::unique_ptr<C2Work>> abandonedWorks;
     while (!mPendingWorks.empty()) {
         abandonedWorks.emplace_back(std::move(mPendingWorks.front()));
@@ -754,7 +714,7 @@ void V4L2DecodeComponent::reportAbandonedWorks() {
             ALOGE("mListener is nullptr, setListener_vb() not called?");
             return;
         }
-        mListener->onWorkDone_nb(std::move(sharedThis), std::move(abandonedWorks));
+        mListener->onWorkDone_nb(shared_from_this(), std::move(abandonedWorks));
     }
 }
 
@@ -828,12 +788,6 @@ void V4L2DecodeComponent::reportError(c2_status_t error) {
     ALOGE("%s(error=%u)", __func__, static_cast<uint32_t>(error));
     ALOG_ASSERT(mDecoderTaskRunner->RunsTasksInCurrentSequence());
 
-    auto sharedThis = mStdWeakThis.lock();
-    if (sharedThis == nullptr) {
-        ALOGE("%s(): V4L2DecodeComponent instance is destroyed.", __func__);
-        return;
-    }
-
     if (mComponentState.load() == ComponentState::ERROR) return;
     mComponentState.store(ComponentState::ERROR);
 
@@ -841,7 +795,21 @@ void V4L2DecodeComponent::reportError(c2_status_t error) {
         ALOGE("mListener is nullptr, setListener_vb() not called?");
         return;
     }
-    mListener->onError_nb(std::move(sharedThis), static_cast<uint32_t>(error));
+    mListener->onError_nb(shared_from_this(), static_cast<uint32_t>(error));
+}
+
+c2_status_t V4L2DecodeComponent::reset() {
+    ALOGV("%s()", __func__);
+
+    return stop();
+}
+
+c2_status_t V4L2DecodeComponent::release() {
+    ALOGV("%s()", __func__);
+
+    c2_status_t ret = reset();
+    mComponentState.store(ComponentState::RELEASED);
+    return ret;
 }
 
 c2_status_t V4L2DecodeComponent::announce_nb(const std::vector<C2WorkOutline>& /* items */) {

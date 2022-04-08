@@ -5,7 +5,6 @@
 #ifndef ANDROID_V4L2_CODEC2_COMPONENTS_V4L2_DECODE_COMPONENT_H
 #define ANDROID_V4L2_CODEC2_COMPONENTS_V4L2_DECODE_COMPONENT_H
 
-#include <atomic>
 #include <memory>
 
 #include <C2Component.h>
@@ -20,6 +19,7 @@
 #include <v4l2_codec2/components/V4L2DecodeInterface.h>
 #include <v4l2_codec2/components/VideoDecoder.h>
 #include <v4l2_codec2/components/VideoFramePool.h>
+#include <v4l2_device.h>
 
 namespace android {
 
@@ -59,9 +59,9 @@ private:
     static const char* ComponentStateToString(ComponentState state);
 
     // Handle C2Component's public methods on |mDecoderTaskRunner|.
-    void startTask(c2_status_t* status, ::base::WaitableEvent* done);
+    void destroyTask();
+    void startTask(c2_status_t* status);
     void stopTask();
-    void releaseTask();
     void queueTask(std::unique_ptr<C2Work> work);
     void flushTask();
     void drainTask();
@@ -70,9 +70,8 @@ private:
     // Try to process pending works at |mPendingWorks|. Paused when |mIsDraining| is set.
     void pumpPendingWorks();
     // Get the buffer pool.
-    std::unique_ptr<VideoFramePool> getVideoFramePool(const ui::Size& size,
-                                                      HalPixelFormat pixelFormat,
-                                                      size_t numBuffers);
+    void getVideoFramePool(std::unique_ptr<VideoFramePool>* pool, const media::Size& size,
+                           HalPixelFormat pixelFormat, size_t numBuffers);
     // Detect and report works with no-show frame, only used at VP8 and VP9.
     void detectNoShowFrameWorksAndReportIfFinished(const C2WorkOrdinalStruct& currOrdinal);
 
@@ -91,8 +90,6 @@ private:
     bool reportWork(std::unique_ptr<C2Work> work);
     // Report error when any error occurs.
     void reportError(c2_status_t error);
-
-    static std::atomic<int32_t> sConcurrentInstances;
 
     // The pointer of component interface implementation.
     std::shared_ptr<V4L2DecodeInterface> mIntfImpl;
@@ -122,6 +119,7 @@ private:
 
     // The mutex lock to synchronize start/stop/reset/release calls.
     std::mutex mStartStopLock;
+    ::base::WaitableEvent mStartStopDone;
 
     // The color aspects parameter for current decoded output buffers.
     std::shared_ptr<C2StreamColorAspectsInfo::output> mCurrentColorAspects;
@@ -139,9 +137,6 @@ private:
     // |mDevice| on this.
     ::base::Thread mDecoderThread{"V4L2DecodeComponentDecoderThread"};
     scoped_refptr<::base::SequencedTaskRunner> mDecoderTaskRunner;
-
-    // Hold a weak_ptr of |*this| when |mDecoderThread| is running.
-    std::weak_ptr<V4L2DecodeComponent> mStdWeakThis;
 
     ::base::WeakPtrFactory<V4L2DecodeComponent> mWeakThisFactory{this};
     ::base::WeakPtr<V4L2DecodeComponent> mWeakThis;

@@ -10,11 +10,11 @@
 
 #include <C2Buffer.h>
 
-#include <ui/Rect.h>
+#include <rect.h>
 
 namespace android {
 
-// Wrap C2GraphicBlock and provide essential information from C2GraphicBlock.
+// Wrap C2GraphicBlock and provide essiential information from C2GraphicBlock.
 class VideoFrame {
 public:
     // Create the instance from C2GraphicBlock. return nullptr if any error occurs.
@@ -25,8 +25,8 @@ public:
     const std::vector<int>& getFDs() const;
 
     // Getter and setter of the visible rectangle.
-    void setVisibleRect(const Rect& visibleRect);
-    const Rect& getVisibleRect() const;
+    void setVisibleRect(const media::Rect& visibleRect);
+    const media::Rect& getVisibleRect() const;
 
     // Getter and setter of the bitstream ID of the corresponding input bitstream.
     void setBitstreamId(int32_t bitstreamId);
@@ -40,7 +40,7 @@ private:
 
     std::shared_ptr<C2GraphicBlock> mGraphicBlock;
     std::vector<int> mFds;
-    Rect mVisibleRect;
+    media::Rect mVisibleRect;
     int32_t mBitstreamId = -1;
 };
 

@@ -7,10 +7,7 @@
 package org.chromium.c2.test;
 
 import android.app.Activity;
-import android.content.BroadcastReceiver;
-import android.content.Context;
 import android.content.Intent;
-import android.content.IntentFilter;
 import android.os.AsyncTask;
 import android.os.Bundle;
 import android.os.Handler;
@@ -37,9 +34,7 @@ public class E2eTestActivity extends Activity implements SurfaceHolder.Callback 
     private Size mExpectedSize;
     private CountDownLatch mLatch;
 
-    private long mCodecPtr = 0;
-
-    private BroadcastReceiver mCodecConfigReceiver;
+    private long mDecoderPtr;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -53,17 +48,11 @@ public class E2eTestActivity extends Activity implements SurfaceHolder.Callback 
         mSurfaceView.getHolder().addCallback(this);
 
         mCanStartTest = !getIntent().getBooleanExtra("delay-start", false);
-
-        mCodecConfigReceiver = new CodecReadyReceiver();
-        registerReceiver(
-                mCodecConfigReceiver,
-                new IntentFilter("org.chromium.c2.test.CHECK_CODEC_CONFIGURED"));
     }
 
     @Override
     protected void onDestroy() {
         super.onDestroy();
-        unregisterReceiver(mCodecConfigReceiver);
         // gtest can't reuse a process
         System.exit(0);
     }
@@ -110,9 +99,9 @@ public class E2eTestActivity extends Activity implements SurfaceHolder.Callback 
                 });
     }
 
-    void onCodecReady(long codecPtr) {
+    void onDecoderReady(long decoderPtr) {
         synchronized (this) {
-            mCodecPtr = codecPtr;
+            mDecoderPtr = decoderPtr;
         }
     }
 
@@ -125,8 +114,8 @@ public class E2eTestActivity extends Activity implements SurfaceHolder.Callback 
         }
 
         synchronized (this) {
-            if (mCodecPtr != 0) {
-                stopDecoderLoop(mCodecPtr);
+            if (mDecoderPtr != 0) {
+                stopDecoderLoop(mDecoderPtr);
             }
         }
     }
@@ -174,17 +163,6 @@ public class E2eTestActivity extends Activity implements SurfaceHolder.Callback 
     public void surfaceDestroyed(SurfaceHolder holder) {
         if (!isFinishing()) {
             throw new RuntimeException("Surface destroyed during test");
-        }
-    }
-
-    class CodecReadyReceiver extends BroadcastReceiver {
-        @Override
-        public void onReceive(Context ctx, Intent intent) {
-            boolean ready;
-            synchronized (E2eTestActivity.this) {
-                ready = mCodecPtr != 0;
-            }
-            setResultCode(ready ? 1 : 0);
         }
     }
 

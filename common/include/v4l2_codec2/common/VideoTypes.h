@@ -8,7 +8,6 @@
 #include <optional>
 #include <string>
 
-#include <C2Config.h>
 #include <android/hardware/graphics/common/1.0/types.h>
 
 namespace android {
@@ -19,12 +18,7 @@ enum class VideoCodec {
     VP8,
     VP9,
 };
-
-constexpr std::initializer_list<VideoCodec> kAllCodecs = {VideoCodec::H264, VideoCodec::VP8,
-                                                          VideoCodec::VP9};
-
 const char* VideoCodecToString(VideoCodec codec);
-const char* profileToString(C2Config::profile_t profile);
 
 // Enumeration of supported pixel format. The value should be the same as
 // ::android::hardware::graphics::common::V1_0::PixelFormat.

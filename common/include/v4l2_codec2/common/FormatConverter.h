@@ -10,10 +10,9 @@
 #include <vector>
 
 #include <C2Buffer.h>
-#include <ui/Size.h>
+#include <size.h>
 #include <utils/StrongPointer.h>
-
-#include <v4l2_codec2/common/VideoPixelFormat.h>
+#include <video_pixel_format.h>
 
 namespace android {
 
@@ -51,9 +50,10 @@ public:
 
     // Create FormatConverter instance and initialize it, nullptr will be returned on
     // initialization error.
-    static std::unique_ptr<FormatConverter> Create(VideoPixelFormat outFormat,
-                                                   const ui::Size& visibleSize, uint32_t inputCount,
-                                                   const ui::Size& codedSize);
+    static std::unique_ptr<FormatConverter> Create(media::VideoPixelFormat outFormat,
+                                                        const media::Size& visibleSize,
+                                                        uint32_t inputCount,
+                                                        const media::Size& codedSize);
 
     // Convert the input block into the alternative block with required pixel format and return it,
     // or return the original block if zero-copy is applied.
@@ -93,8 +93,8 @@ private:
 
     // Initialize foramt converter. It will pre-allocate a set of graphic blocks as |codedSize| and
     // |outFormat|. This function should be called prior to other functions.
-    c2_status_t initialize(VideoPixelFormat outFormat, const ui::Size& visibleSize,
-                           uint32_t inputCount, const ui::Size& codedSize);
+    c2_status_t initialize(media::VideoPixelFormat outFormat, const media::Size& visibleSize,
+                           uint32_t inputCount, const media::Size& codedSize);
 
     // The array of block entries.
     std::vector<std::unique_ptr<BlockEntry>> mGraphicBlocks;
@@ -106,8 +106,8 @@ private:
     std::unique_ptr<uint8_t[]> mTempPlaneU;
     std::unique_ptr<uint8_t[]> mTempPlaneV;
 
-    VideoPixelFormat mOutFormat = VideoPixelFormat::UNKNOWN;
-    ui::Size mVisibleSize;
+    media::VideoPixelFormat mOutFormat = media::VideoPixelFormat::PIXEL_FORMAT_UNKNOWN;
+    media::Size mVisibleSize;
 };
 
 }  // namespace android

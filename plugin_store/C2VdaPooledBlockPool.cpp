@@ -9,6 +9,7 @@
 
 #include <time.h>
 
+#include <C2AllocatorGralloc.h>
 #include <C2BlockInternal.h>
 #include <bufferpool/BufferPoolTypes.h>
 #include <log/log.h>
