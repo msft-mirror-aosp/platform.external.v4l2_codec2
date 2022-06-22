@@ -25,7 +25,8 @@
 #include <media/stagefright/foundation/ColorUtils.h>
 
 #include <v4l2_codec2/common/Common.h>
-#include <v4l2_codec2/common/NalParser.h>
+#include <v4l2_codec2/common/H264NalParser.h>
+#include <v4l2_codec2/common/HEVCNalParser.h>
 #include <v4l2_codec2/common/VideoTypes.h>
 #include <v4l2_codec2/components/BitstreamBuffer.h>
 #include <v4l2_codec2/components/V4L2Decoder.h>
@@ -62,18 +63,26 @@ int32_t frameIndexToBitstreamId(c2_cntr64_t frameIndex) {
     return static_cast<int32_t>(frameIndex.peeku() & 0x3FFFFFFF);
 }
 
-bool parseCodedColorAspects(const C2ConstLinearBlock& input,
+bool parseCodedColorAspects(const C2ConstLinearBlock& input, std::optional<VideoCodec> codec,
                             C2StreamColorAspectsInfo::input* codedAspects) {
     C2ReadView view = input.map().get();
-    NalParser parser(view.data(), view.capacity());
+    NalParser::ColorAspects aspects;
+    std::unique_ptr<NalParser> parser;
+    if (codec == VideoCodec::H264) {
+        parser = std::make_unique<H264NalParser>(view.data(), view.capacity());
+    } else if (codec == VideoCodec::HEVC) {
+        parser = std::make_unique<HEVCNalParser>(view.data(), view.capacity());
+    } else {
+        ALOGV("Unsupported codec for finding color aspects");
+        return false;
+    }
 
-    if (!parser.locateSPS()) {
+    if (!parser->locateSPS()) {
         ALOGV("Couldn't find SPS");
         return false;
     }
 
-    NalParser::ColorAspects aspects;
-    if (!parser.findCodedColorAspects(&aspects)) {
+    if (!parser->findCodedColorAspects(&aspects)) {
         ALOGV("Couldn't find color description in SPS");
         return false;
     }
@@ -476,10 +485,13 @@ void V4L2DecodeComponent::pumpPendingWorks() {
                     work->input.buffers.front()->data().linearBlocks().front();
             ALOG_ASSERT(linearBlock.size() > 0u, "Input buffer of work(%d) is empty.", bitstreamId);
 
-            // Try to parse color aspects from bitstream for CSD work of non-secure H264 codec.
-            if (isCSDWork && !mIsSecure && (mIntfImpl->getVideoCodec() == VideoCodec::H264)) {
+            // Try to parse color aspects from bitstream for CSD work of non-secure H264 codec or HEVC
+            // codec (HEVC will only be CENCv3 which is parseable for secure).
+            if (isCSDWork && ((!mIsSecure && mIntfImpl->getVideoCodec() == VideoCodec::H264) ||
+                              mIntfImpl->getVideoCodec() == VideoCodec::HEVC)) {
                 C2StreamColorAspectsInfo::input codedAspects = {0u};
-                if (parseCodedColorAspects(linearBlock, &codedAspects)) {
+                if (parseCodedColorAspects(linearBlock, mIntfImpl->getVideoCodec(),
+                                           &codedAspects)) {
                     std::vector<std::unique_ptr<C2SettingResult>> failures;
                     c2_status_t status =
                             mIntfImpl->config({&codedAspects}, C2_MAY_BLOCK, &failures);
