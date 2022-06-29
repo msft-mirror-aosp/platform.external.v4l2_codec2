@@ -652,6 +652,12 @@ bool V4L2EncodeComponent::initializeEncoder() {
     // Get the requested bitrate mode and bitrate. The C2 framework doesn't offer a parameter to
     // configure the peak bitrate, so we use a multiple of the target bitrate.
     mBitrateMode = mInterface->getBitrateMode();
+    if (property_get_bool("persist.vendor.v4l2_codec2.disable_vbr", false)) {
+        // NOTE: This is a workaround for b/235771157.
+        ALOGW("VBR is disabled on this device");
+        mBitrateMode = C2Config::BITRATE_CONST;
+    }
+
     mBitrate = mInterface->getBitrate();
 
     mEncoder = V4L2Encoder::create(
