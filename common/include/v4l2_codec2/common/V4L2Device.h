@@ -27,6 +27,26 @@
 #include <v4l2_codec2/common/V4L2DevicePoller.h>
 #include <v4l2_codec2/common/VideoTypes.h>
 
+// VP8 parsed frames
+#ifndef V4L2_PIX_FMT_VP8_FRAME
+#define V4L2_PIX_FMT_VP8_FRAME v4l2_fourcc('V', 'P', '8', 'F')
+#endif
+
+// VP9 parsed frames
+#ifndef V4L2_PIX_FMT_VP9_FRAME
+#define V4L2_PIX_FMT_VP9_FRAME v4l2_fourcc('V', 'P', '9', 'F')
+#endif
+
+// H264 parsed slices
+#ifndef V4L2_PIX_FMT_H264_SLICE
+#define V4L2_PIX_FMT_H264_SLICE v4l2_fourcc('S', '2', '6', '4')
+#endif
+
+// HEVC parsed slices
+#ifndef V4L2_PIX_FMT_HEVC_SLICE
+#define V4L2_PIX_FMT_HEVC_SLICE v4l2_fourcc('S', '2', '6', '5')
+#endif
+
 namespace android {
 
 class V4L2Queue;
@@ -344,7 +364,9 @@ public:
     // Utility format conversion functions
     // If there is no corresponding single- or multi-planar format, returns 0.
     static uint32_t C2ProfileToV4L2PixFmt(C2Config::profile_t profile, bool sliceBased);
+    static C2Config::level_t v4L2LevelToC2Level(VideoCodec codec, uint32_t level);
     static C2Config::profile_t v4L2ProfileToC2Profile(VideoCodec codec, uint32_t profile);
+    std::vector<C2Config::level_t> v4L2PixFmtToC2Levels(uint32_t pixFmt);
     std::vector<C2Config::profile_t> v4L2PixFmtToC2Profiles(uint32_t pixFmt, bool isEncoder);
     // Calculates the largest plane's allocation size requested by a V4L2 device.
     static ui::Size allocatedSizeFromV4L2Format(const struct v4l2_format& format);
@@ -436,6 +458,10 @@ public:
 
     std::vector<uint32_t> enumerateSupportedPixelformats(v4l2_buf_type bufType);
 
+    std::vector<C2Config::level_t> getSupportedDecodeLevels(VideoCodec videoCodecType);
+
+    std::vector<C2Config::level_t> enumerateSupportedDecodeLevels(VideoCodec videoCodecType);
+
     // Return supported profiles for decoder, including only profiles for given fourcc
     // |pixelFormats|.
     SupportedDecodeProfiles getSupportedDecodeProfiles(const std::vector<uint32_t>& pixelFormats);
@@ -444,6 +470,8 @@ public:
     SupportedEncodeProfiles getSupportedEncodeProfiles();
 
     C2Config::profile_t getDefaultProfile(VideoCodec codec);
+
+    C2Config::level_t getDefaultLevel(VideoCodec codec);
 
     // Start polling on this V4L2Device. |eventCallback| will be posted to the caller's sequence if
     // a buffer is ready to be dequeued and/or a V4L2 event has been posted. |errorCallback| will

@@ -52,6 +52,9 @@ std::string toString(const ui::Size& size);
 // Check whether specified profile can be used with specified codec
 bool isValidProfileForCodec(VideoCodec codec, C2Config::profile_t profile);
 
+// Check whether specified pixel format can be used with specified codec
+bool isValidPixFmtForCodec(VideoCodec codec, uint32_t pixFmt);
+
 }  // namespace android
 
 #endif  // ANDROID_V4L2_CODEC2_COMMON_COMMON_H

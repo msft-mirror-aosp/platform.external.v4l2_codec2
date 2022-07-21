@@ -9,6 +9,7 @@
 #define ATRACE_TAG ATRACE_TAG_VIDEO
 #define LOG_TAG "V4L2Device"
 
+#include <linux/v4l2-controls.h>
 #include <v4l2_codec2/common/V4L2Device.h>
 
 #include <fcntl.h>
@@ -36,26 +37,6 @@
 
 #include <v4l2_codec2/common/Fourcc.h>
 #include <v4l2_codec2/common/VideoPixelFormat.h>
-
-// VP8 parsed frames
-#ifndef V4L2_PIX_FMT_VP8_FRAME
-#define V4L2_PIX_FMT_VP8_FRAME v4l2_fourcc('V', 'P', '8', 'F')
-#endif
-
-// VP9 parsed frames
-#ifndef V4L2_PIX_FMT_VP9_FRAME
-#define V4L2_PIX_FMT_VP9_FRAME v4l2_fourcc('V', 'P', '9', 'F')
-#endif
-
-// H264 parsed slices
-#ifndef V4L2_PIX_FMT_H264_SLICE
-#define V4L2_PIX_FMT_H264_SLICE v4l2_fourcc('S', '2', '6', '4')
-#endif
-
-// HEVC parsed slices
-#ifndef V4L2_PIX_FMT_HEVC_SLICE
-#define V4L2_PIX_FMT_HEVC_SLICE v4l2_fourcc('S', '2', '6', '5')
-#endif
 
 namespace android {
 
@@ -1309,6 +1290,151 @@ uint32_t V4L2Device::C2ProfileToV4L2PixFmt(C2Config::profile_t profile, bool sli
 }
 
 // static
+C2Config::level_t V4L2Device::v4L2LevelToC2Level(VideoCodec codec, uint32_t level) {
+    switch (codec) {
+    case VideoCodec::H264:
+        switch (level) {
+        case V4L2_MPEG_VIDEO_H264_LEVEL_1_0:
+            return C2Config::LEVEL_AVC_1;
+        case V4L2_MPEG_VIDEO_H264_LEVEL_1B:
+            return C2Config::LEVEL_AVC_1B;
+        case V4L2_MPEG_VIDEO_H264_LEVEL_1_1:
+            return C2Config::LEVEL_AVC_1_1;
+        case V4L2_MPEG_VIDEO_H264_LEVEL_1_2:
+            return C2Config::LEVEL_AVC_1_2;
+        case V4L2_MPEG_VIDEO_H264_LEVEL_1_3:
+            return C2Config::LEVEL_AVC_1_3;
+        case V4L2_MPEG_VIDEO_H264_LEVEL_2_0:
+            return C2Config::LEVEL_AVC_2;
+        case V4L2_MPEG_VIDEO_H264_LEVEL_2_1:
+            return C2Config::LEVEL_AVC_2_1;
+        case V4L2_MPEG_VIDEO_H264_LEVEL_2_2:
+            return C2Config::LEVEL_AVC_2_2;
+        case V4L2_MPEG_VIDEO_H264_LEVEL_3_0:
+            return C2Config::LEVEL_AVC_3;
+        case V4L2_MPEG_VIDEO_H264_LEVEL_3_1:
+            return C2Config::LEVEL_AVC_3_1;
+        case V4L2_MPEG_VIDEO_H264_LEVEL_3_2:
+            return C2Config::LEVEL_AVC_3_2;
+        case V4L2_MPEG_VIDEO_H264_LEVEL_4_0:
+            return C2Config::LEVEL_AVC_4;
+        case V4L2_MPEG_VIDEO_H264_LEVEL_4_1:
+            return C2Config::LEVEL_AVC_4_1;
+        case V4L2_MPEG_VIDEO_H264_LEVEL_4_2:
+            return C2Config::LEVEL_AVC_4_2;
+        case V4L2_MPEG_VIDEO_H264_LEVEL_5_0:
+            return C2Config::LEVEL_AVC_5;
+#ifdef V4L2_MPEG_VIDEO_H264_LEVEL_5_1
+        case V4L2_MPEG_VIDEO_H264_LEVEL_5_1:
+            return C2Config::LEVEL_AVC_5_1;
+#endif
+#ifdef V4L2_MPEG_VIDEO_H264_LEVEL_5_2
+        case V4L2_MPEG_VIDEO_H264_LEVEL_5_2:
+            return C2Config::LEVEL_AVC_5_2;
+#endif
+#ifdef V4L2_MPEG_VIDEO_H264_LEVEL_6_0
+        case V4L2_MPEG_VIDEO_H264_LEVEL_6_0:
+            return C2Config::LEVEL_AVC_6;
+#endif
+#ifdef V4L2_MPEG_VIDEO_H264_LEVEL_6_1
+        case V4L2_MPEG_VIDEO_H264_LEVEL_6_1:
+            return C2Config::LEVEL_AVC_6_1;
+#endif
+#ifdef V4L2_MPEG_VIDEO_H264_LEVEL_6_2
+        case V4L2_MPEG_VIDEO_H264_LEVEL_6_2:
+            return C2Config::LEVEL_AVC_6_2;
+#endif
+        }
+        break;
+    case VideoCodec::VP8:
+        return C2Config::LEVEL_UNUSED;
+        break;
+    case VideoCodec::VP9:
+        switch (level) {
+#ifdef V4L2_MPEG_VIDEO_VP9_LEVEL_1_0
+        case V4L2_MPEG_VIDEO_VP9_LEVEL_1_0:
+            return C2Config::LEVEL_VP9_1;
+        case V4L2_MPEG_VIDEO_VP9_LEVEL_1_1:
+            return C2Config::LEVEL_VP9_1_1;
+        case V4L2_MPEG_VIDEO_VP9_LEVEL_2_0:
+            return C2Config::LEVEL_VP9_2;
+        case V4L2_MPEG_VIDEO_VP9_LEVEL_2_1:
+            return C2Config::LEVEL_VP9_2_1;
+        case V4L2_MPEG_VIDEO_VP9_LEVEL_3_0:
+            return C2Config::LEVEL_VP9_3;
+        case V4L2_MPEG_VIDEO_VP9_LEVEL_3_1:
+            return C2Config::LEVEL_VP9_3_1;
+        case V4L2_MPEG_VIDEO_VP9_LEVEL_4_0:
+            return C2Config::LEVEL_VP9_4;
+        case V4L2_MPEG_VIDEO_VP9_LEVEL_4_1:
+            return C2Config::LEVEL_VP9_4_1;
+#ifdef V4L2_MPEG_VIDEO_VP9_LEVEL_5_0
+        case V4L2_MPEG_VIDEO_VP9_LEVEL_5_0:
+            return C2Config::LEVEL_VP9_5;
+#endif
+#ifdef V4L2_MPEG_VIDEO_VP9_LEVEL_5_1
+        case V4L2_MPEG_VIDEO_VP9_LEVEL_5_1:
+            return C2Config::LEVEL_VP9_5_1;
+#endif
+#ifdef V4L2_MPEG_VIDEO_VP9_LEVEL_5_2
+        case V4L2_MPEG_VIDEO_VP9_LEVEL_5_2:
+            return C2Config::LEVEL_VP9_5_2;
+#endif
+#ifdef V4L2_MPEG_VIDEO_VP9_LEVEL_6_0
+        case V4L2_MPEG_VIDEO_VP9_LEVEL_6_0:
+            return C2Config::LEVEL_VP9_6;
+#endif
+#ifdef V4L2_MPEG_VIDEO_VP9_LEVEL_6_1
+        case V4L2_MPEG_VIDEO_VP9_LEVEL_6_1:
+            return C2Config::LEVEL_VP9_6_1;
+#endif
+#ifdef V4L2_MPEG_VIDEO_VP9_LEVEL_6_2
+        case V4L2_MPEG_VIDEO_VP9_LEVEL_6_2:
+            return C2Config::LEVEL_VP9_6_2;
+#endif
+#endif
+        default:
+            return C2Config::LEVEL_UNUSED;
+        }
+        break;
+    case VideoCodec::HEVC:
+        switch (level) {
+        case V4L2_MPEG_VIDEO_HEVC_LEVEL_1:
+            return C2Config::LEVEL_HEVC_MAIN_1;
+        case V4L2_MPEG_VIDEO_HEVC_LEVEL_2:
+            return C2Config::LEVEL_HEVC_MAIN_2;
+        case V4L2_MPEG_VIDEO_HEVC_LEVEL_2_1:
+            return C2Config::LEVEL_HEVC_MAIN_2_1;
+        case V4L2_MPEG_VIDEO_HEVC_LEVEL_3:
+            return C2Config::LEVEL_HEVC_MAIN_3;
+        case V4L2_MPEG_VIDEO_HEVC_LEVEL_3_1:
+            return C2Config::LEVEL_HEVC_MAIN_3_1;
+        case V4L2_MPEG_VIDEO_HEVC_LEVEL_4:
+            return C2Config::LEVEL_HEVC_MAIN_4;
+        case V4L2_MPEG_VIDEO_HEVC_LEVEL_4_1:
+            return C2Config::LEVEL_HEVC_MAIN_4_1;
+        case V4L2_MPEG_VIDEO_HEVC_LEVEL_5:
+            return C2Config::LEVEL_HEVC_MAIN_5;
+        case V4L2_MPEG_VIDEO_HEVC_LEVEL_5_1:
+            return C2Config::LEVEL_HEVC_MAIN_5_1;
+        case V4L2_MPEG_VIDEO_HEVC_LEVEL_5_2:
+            return C2Config::LEVEL_HEVC_MAIN_5_2;
+        case V4L2_MPEG_VIDEO_HEVC_LEVEL_6:
+            return C2Config::LEVEL_HEVC_MAIN_6;
+        case V4L2_MPEG_VIDEO_HEVC_LEVEL_6_1:
+            return C2Config::LEVEL_HEVC_MAIN_6_1;
+        case V4L2_MPEG_VIDEO_HEVC_LEVEL_6_2:
+            return C2Config::LEVEL_HEVC_MAIN_6_2;
+        }
+        break;
+    default:
+        ALOGE("Unknown codec: %u", codec);
+    }
+    ALOGE("Unknown level: %u", level);
+    return C2Config::LEVEL_UNUSED;
+}
+
+// static
 C2Config::profile_t V4L2Device::v4L2ProfileToC2Profile(VideoCodec codec, uint32_t profile) {
     switch (codec) {
     case VideoCodec::H264:
@@ -1363,6 +1489,97 @@ C2Config::profile_t V4L2Device::v4L2ProfileToC2Profile(VideoCodec codec, uint32_
     }
     ALOGE("Unknown profile: %u", profile);
     return C2Config::PROFILE_UNUSED;
+}
+
+std::vector<C2Config::level_t> V4L2Device::v4L2PixFmtToC2Levels(uint32_t pixFmt) {
+    auto getSupportedLevels = [this](VideoCodec codec, std::vector<C2Config::level_t>* levels) {
+        uint32_t queryId = 0;
+        switch (codec) {
+        case VideoCodec::H264:
+            queryId = V4L2_CID_MPEG_VIDEO_H264_LEVEL;
+            break;
+#ifdef V4L2_CID_MPEG_VIDEO_VP9_LEVEL
+        case VideoCodec::VP9:
+            queryId = V4L2_CID_MPEG_VIDEO_VP9_LEVEL;
+            break;
+#endif
+        case VideoCodec::HEVC:
+            queryId = V4L2_CID_MPEG_VIDEO_HEVC_LEVEL;
+            break;
+        default:
+            return false;
+        }
+
+        v4l2_queryctrl queryCtrl = {};
+        queryCtrl.id = queryId;
+        if (ioctl(VIDIOC_QUERYCTRL, &queryCtrl) != 0) {
+            return false;
+        }
+        v4l2_querymenu queryMenu = {};
+        queryMenu.id = queryCtrl.id;
+        for (queryMenu.index = queryCtrl.minimum;
+             static_cast<int>(queryMenu.index) <= queryCtrl.maximum; queryMenu.index++) {
+            if (ioctl(VIDIOC_QUERYMENU, &queryMenu) == 0) {
+                const C2Config::level_t level =
+                        V4L2Device::v4L2LevelToC2Level(codec, queryMenu.index);
+                if (level != C2Config::LEVEL_UNUSED) levels->push_back(level);
+            }
+        }
+        return true;
+    };
+
+    std::vector<C2Config::level_t> levels;
+    switch (pixFmt) {
+    case V4L2_PIX_FMT_H264:
+    case V4L2_PIX_FMT_H264_SLICE:
+        if (!getSupportedLevels(VideoCodec::H264, &levels)) {
+            ALOGW("Driver doesn't support QUERY H264 levels, "
+                  "use default values, 1-5_2");
+            levels = {C2Config::LEVEL_AVC_1,   C2Config::LEVEL_AVC_1B,  C2Config::LEVEL_AVC_1_1,
+                      C2Config::LEVEL_AVC_1_2, C2Config::LEVEL_AVC_1_3, C2Config::LEVEL_AVC_2,
+                      C2Config::LEVEL_AVC_2_1, C2Config::LEVEL_AVC_2_2, C2Config::LEVEL_AVC_3,
+                      C2Config::LEVEL_AVC_3_1, C2Config::LEVEL_AVC_3_2, C2Config::LEVEL_AVC_4,
+                      C2Config::LEVEL_AVC_4_1, C2Config::LEVEL_AVC_4_2, C2Config::LEVEL_AVC_5,
+                      C2Config::LEVEL_AVC_5_1, C2Config::LEVEL_AVC_5_2};
+        }
+        break;
+    case V4L2_PIX_FMT_VP8:
+    case V4L2_PIX_FMT_VP8_FRAME:
+        if (!getSupportedLevels(VideoCodec::VP8, &levels)) {
+            ALOGW("Driver doesn't support QUERY VP8 levels, use default values, unused");
+            levels = {C2Config::LEVEL_UNUSED};
+        }
+        break;
+    case V4L2_PIX_FMT_VP9:
+    case V4L2_PIX_FMT_VP9_FRAME:
+        if (!getSupportedLevels(VideoCodec::VP9, &levels)) {
+            ALOGW("Driver doesn't support QUERY VP9 levels, use default values, 1-5");
+            levels = {C2Config::LEVEL_VP9_1,   C2Config::LEVEL_VP9_1_1, C2Config::LEVEL_VP9_2,
+                      C2Config::LEVEL_VP9_2_1, C2Config::LEVEL_VP9_3,   C2Config::LEVEL_VP9_3_1,
+                      C2Config::LEVEL_VP9_4,   C2Config::LEVEL_VP9_4_1, C2Config::LEVEL_VP9_5};
+        }
+        break;
+    case V4L2_PIX_FMT_HEVC:
+    case V4L2_PIX_FMT_HEVC_SLICE:
+        if (!getSupportedLevels(VideoCodec::VP9, &levels)) {
+            ALOGW("Driver doesn't support QUERY HEVC levels, use default values");
+            levels = {C2Config::LEVEL_HEVC_MAIN_1,   C2Config::LEVEL_HEVC_MAIN_2,
+                      C2Config::LEVEL_HEVC_MAIN_2_1, C2Config::LEVEL_HEVC_MAIN_3,
+                      C2Config::LEVEL_HEVC_MAIN_3_1, C2Config::LEVEL_HEVC_MAIN_4,
+                      C2Config::LEVEL_HEVC_MAIN_4_1, C2Config::LEVEL_HEVC_MAIN_5,
+                      C2Config::LEVEL_HEVC_MAIN_5_1, C2Config::LEVEL_HEVC_MAIN_5_2,
+                      C2Config::LEVEL_HEVC_MAIN_6,   C2Config::LEVEL_HEVC_MAIN_6_1,
+                      C2Config::LEVEL_HEVC_MAIN_6_2};
+        }
+        break;
+    default:
+        ALOGE("Unhandled pixelformat %s", fourccToString(pixFmt).c_str());
+        return {};
+    }
+
+    std::sort(levels.begin(), levels.end());
+    levels.erase(std::unique(levels.begin(), levels.end()), levels.end());
+    return levels;
 }
 
 std::vector<C2Config::profile_t> V4L2Device::v4L2PixFmtToC2Profiles(uint32_t pixFmt,
@@ -1885,6 +2102,24 @@ std::vector<uint32_t> V4L2Device::enumerateSupportedPixelformats(v4l2_buf_type b
     return pixelFormats;
 }
 
+std::vector<C2Config::level_t> V4L2Device::getSupportedDecodeLevels(VideoCodec videoCodecType) {
+    std::vector<C2Config::level_t> supportedLevels;
+    Type type = Type::kDecoder;
+    const auto& devices = getDevicesForType(type);
+    for (const auto& device : devices) {
+        if (!openDevicePath(device.first, type)) {
+            ALOGV("Failed opening %s", device.first.c_str());
+            continue;
+        }
+
+        const auto& levels = enumerateSupportedDecodeLevels(videoCodecType);
+        supportedLevels.insert(supportedLevels.end(), levels.begin(), levels.end());
+        closeDevice();
+    }
+
+    return supportedLevels;
+}
+
 V4L2Device::SupportedDecodeProfiles V4L2Device::getSupportedDecodeProfiles(
         const std::vector<uint32_t>& pixelFormats) {
     SupportedDecodeProfiles supportedProfiles;
@@ -1959,6 +2194,58 @@ V4L2Device::SupportedEncodeProfiles V4L2Device::getSupportedEncodeProfiles() {
     }
 
     return supportedProfiles;
+}
+
+C2Config::level_t V4L2Device::getDefaultLevel(VideoCodec codec) {
+    uint32_t queryId = 0;
+
+    switch (codec) {
+    case VideoCodec::H264:
+        queryId = V4L2_CID_MPEG_VIDEO_H264_LEVEL;
+        break;
+#ifdef V4L2_CID_MPEG_VIDEO_VP9_LEVEL
+    case VideoCodec::VP9:
+        queryId = V4L2_CID_MPEG_VIDEO_VP9_LEVEL;
+        break;
+#endif
+    case VideoCodec::HEVC:
+        queryId = V4L2_CID_MPEG_VIDEO_HEVC_LEVEL;
+        break;
+    default:
+        return C2Config::LEVEL_UNUSED;
+    }
+
+    v4l2_queryctrl queryCtrl = {};
+    queryCtrl.id = queryId;
+    if (ioctl(VIDIOC_QUERYCTRL, &queryCtrl) != 0) {  // gets index of default profile
+        return C2Config::LEVEL_UNUSED;
+    }
+
+    v4l2_querymenu queryMenu = {};
+    queryMenu.id = queryCtrl.id;
+    queryMenu.index = queryCtrl.default_value;
+    if (ioctl(VIDIOC_QUERYMENU, &queryMenu) == 0) {
+        return v4L2LevelToC2Level(codec, queryMenu.index);
+    }
+
+    return C2Config::LEVEL_UNUSED;
+}
+
+std::vector<C2Config::level_t> V4L2Device::enumerateSupportedDecodeLevels(
+        VideoCodec videoCodecType) {
+    std::vector<C2Config::level_t> supportedLevels;
+
+    const auto& supportedPixelformats =
+            enumerateSupportedPixelformats(V4L2_BUF_TYPE_VIDEO_OUTPUT_MPLANE);
+
+    for (uint32_t pixelFormat : supportedPixelformats) {
+        if (isValidPixFmtForCodec(videoCodecType, pixelFormat)) {
+            std::vector<C2Config::level_t> levels = v4L2PixFmtToC2Levels(pixelFormat);
+            supportedLevels.insert(supportedLevels.end(), levels.begin(), levels.end());
+        }
+    }
+
+    return supportedLevels;
 }
 
 V4L2Device::SupportedDecodeProfiles V4L2Device::enumerateSupportedDecodeProfiles(
