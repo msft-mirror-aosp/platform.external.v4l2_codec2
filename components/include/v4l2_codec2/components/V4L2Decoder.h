@@ -16,6 +16,7 @@
 
 #include <ui/Rect.h>
 #include <ui/Size.h>
+#include <v4l2_codec2/common/Fourcc.h>
 #include <v4l2_codec2/common/V4L2Device.h>
 #include <v4l2_codec2/common/VideoTypes.h>
 #include <v4l2_codec2/components/VideoDecoder.h>
@@ -24,6 +25,15 @@
 #include <v4l2_codec2/plugin_store/DmabufHelpers.h>
 
 namespace android {
+
+// Currently we only support flexible pixel 420 format YCBCR_420_888 in Android.
+// Here is the list of flexible 420 format.
+constexpr std::initializer_list<uint32_t> kSupportedOutputFourccs = {
+        Fourcc::YU12, Fourcc::YV12, Fourcc::YM12, Fourcc::YM21,
+        Fourcc::NV12, Fourcc::NV21, Fourcc::NM12, Fourcc::NM21,
+};
+
+uint32_t VideoCodecToV4L2PixFmt(VideoCodec codec);
 
 class V4L2Decoder : public VideoDecoder {
 public:

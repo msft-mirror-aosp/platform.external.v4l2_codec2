@@ -29,12 +29,7 @@ namespace {
 // Extra buffers for transmitting in the whole video pipeline.
 constexpr size_t kNumExtraOutputBuffers = 4;
 
-// Currently we only support flexible pixel 420 format YCBCR_420_888 in Android.
-// Here is the list of flexible 420 format.
-constexpr std::initializer_list<uint32_t> kSupportedOutputFourccs = {
-        Fourcc::YU12, Fourcc::YV12, Fourcc::YM12, Fourcc::YM21,
-        Fourcc::NV12, Fourcc::NV21, Fourcc::NM12, Fourcc::NM21,
-};
+}  // namespace
 
 uint32_t VideoCodecToV4L2PixFmt(VideoCodec codec) {
     switch (codec) {
@@ -48,8 +43,6 @@ uint32_t VideoCodecToV4L2PixFmt(VideoCodec codec) {
         return V4L2_PIX_FMT_HEVC;
     }
 }
-
-}  // namespace
 
 // static
 std::unique_ptr<VideoDecoder> V4L2Decoder::Create(
