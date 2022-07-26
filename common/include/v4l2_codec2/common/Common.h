@@ -15,6 +15,7 @@
 #include <ui/Size.h>
 
 #include <v4l2_codec2/common/VideoPixelFormat.h>
+#include <v4l2_codec2/common/VideoTypes.h>
 
 namespace android {
 
@@ -47,6 +48,9 @@ bool isEmpty(const ui::Size& size);
 
 // Convert the specified |size| to a string.
 std::string toString(const ui::Size& size);
+
+// Check whether specified profile can be used with specified codec
+bool isValidProfileForCodec(VideoCodec codec, C2Config::profile_t profile);
 
 }  // namespace android
 

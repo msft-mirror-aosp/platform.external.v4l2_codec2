@@ -13,8 +13,10 @@
 #include <log/log.h>
 #include <media/stagefright/foundation/MediaDefs.h>
 
+#include <v4l2_codec2/common/Common.h>
 #include <v4l2_codec2/common/V4L2ComponentCommon.h>
 #include <v4l2_codec2/common/V4L2Device.h>
+#include <v4l2_codec2/components/V4L2Decoder.h>
 #include <v4l2_codec2/plugin_store/V4L2AllocatorId.h>
 
 namespace android {
@@ -129,20 +131,59 @@ V4L2DecodeInterface::V4L2DecodeInterface(const std::string& name,
                          .build());
 
     std::string inputMime;
+
+    scoped_refptr<V4L2Device> device = V4L2Device::create();
+    if (!device) {
+        ALOGE("Failed to create V4L2 device");
+    }
+
+    std::vector<uint32_t> profiles;
+    if (device) {
+        V4L2Device::SupportedDecodeProfiles supportedProfiles =
+                device->getSupportedDecodeProfiles({VideoCodecToV4L2PixFmt(*mVideoCodec)});
+        for (const auto& supportedProfile : supportedProfiles) {
+            if (isValidProfileForCodec(mVideoCodec.value(), supportedProfile.profile))
+                profiles.push_back(static_cast<uint32_t>(supportedProfile.profile));
+        }
+    }
+
+    if (profiles.empty()) {
+        ALOGW("No supported profiles for H264 codec");
+        switch (*mVideoCodec) {  //default values used when querry is not supported
+        case VideoCodec::H264:
+            profiles = {
+                    C2Config::PROFILE_AVC_BASELINE,
+                    C2Config::PROFILE_AVC_MAIN,
+                    C2Config::PROFILE_AVC_HIGH,
+            };
+            break;
+        case VideoCodec::VP8:
+            profiles = {C2Config::PROFILE_VP8_0};
+            break;
+        case VideoCodec::VP9:
+            profiles = {C2Config::PROFILE_VP9_0};
+            break;
+        case VideoCodec::HEVC:
+            profiles = {C2Config::PROFILE_HEVC_MAIN};
+            break;
+        }
+    }
+
+    uint32_t defaultProfile = C2Config::PROFILE_UNUSED;
+    if (device) defaultProfile = device->getDefaultProfile(*mVideoCodec);
+    if (defaultProfile == C2Config::PROFILE_UNUSED)
+        defaultProfile = *std::min_element(profiles.begin(), profiles.end());
+
     switch (*mVideoCodec) {
     case VideoCodec::H264:
         inputMime = MEDIA_MIMETYPE_VIDEO_AVC;
         addParameter(
                 DefineParam(mProfileLevel, C2_PARAMKEY_PROFILE_LEVEL)
                         .withDefault(new C2StreamProfileLevelInfo::input(
-                                0u, C2Config::PROFILE_AVC_MAIN, C2Config::LEVEL_AVC_4))
+                                0u, static_cast<C2Config::profile_t>(defaultProfile),
+                                C2Config::LEVEL_AVC_4))
                         .withFields(
-                                {C2F(mProfileLevel, profile)
-                                         .oneOf({C2Config::PROFILE_AVC_BASELINE,
-                                                 C2Config::PROFILE_AVC_CONSTRAINED_BASELINE,
-                                                 C2Config::PROFILE_AVC_MAIN,
-                                                 C2Config::PROFILE_AVC_HIGH,
-                                                 C2Config::PROFILE_AVC_CONSTRAINED_HIGH}),
+                                {C2F(mProfileLevel, profile).oneOf(profiles),
                                  C2F(mProfileLevel, level)
                                          .oneOf({C2Config::LEVEL_AVC_1, C2Config::LEVEL_AVC_1B,
                                                  C2Config::LEVEL_AVC_1_1, C2Config::LEVEL_AVC_1_2,
@@ -170,8 +211,9 @@ V4L2DecodeInterface::V4L2DecodeInterface(const std::string& name,
         addParameter(
                 DefineParam(mProfileLevel, C2_PARAMKEY_PROFILE_LEVEL)
                         .withDefault(new C2StreamProfileLevelInfo::input(
-                                0u, C2Config::PROFILE_VP9_0, C2Config::LEVEL_VP9_5))
-                        .withFields({C2F(mProfileLevel, profile).oneOf({C2Config::PROFILE_VP9_0}),
+                                0u, static_cast<C2Config::profile_t>(defaultProfile),
+                                C2Config::LEVEL_VP9_5))
+                        .withFields({C2F(mProfileLevel, profile).oneOf(profiles),
                                      C2F(mProfileLevel, level)
                                              .oneOf({C2Config::LEVEL_VP9_1, C2Config::LEVEL_VP9_1_1,
                                                      C2Config::LEVEL_VP9_2, C2Config::LEVEL_VP9_2_1,
@@ -184,31 +226,29 @@ V4L2DecodeInterface::V4L2DecodeInterface(const std::string& name,
 
     case VideoCodec::HEVC:
         inputMime = MEDIA_MIMETYPE_VIDEO_HEVC;
-        addParameter(
-                DefineParam(mProfileLevel, C2_PARAMKEY_PROFILE_LEVEL)
-                        .withDefault(new C2StreamProfileLevelInfo::input(
-                                0u, C2Config::PROFILE_HEVC_MAIN, C2Config::LEVEL_HEVC_MAIN_5_1))
-                        .withFields({C2F(mProfileLevel, profile)
-                                             .oneOf({C2Config::PROFILE_HEVC_MAIN,
-                                                     C2Config::PROFILE_HEVC_MAIN_STILL}),
-                                     C2F(mProfileLevel, level)
-                                             .oneOf({C2Config::LEVEL_HEVC_MAIN_1,
-                                                     C2Config::LEVEL_HEVC_MAIN_2,
-                                                     C2Config::LEVEL_HEVC_MAIN_2_1,
-                                                     C2Config::LEVEL_HEVC_MAIN_3,
-                                                     C2Config::LEVEL_HEVC_MAIN_3_1,
-                                                     C2Config::LEVEL_HEVC_MAIN_4,
-                                                     C2Config::LEVEL_HEVC_MAIN_4_1,
-                                                     C2Config::LEVEL_HEVC_MAIN_5,
-                                                     C2Config::LEVEL_HEVC_MAIN_5_1,
-                                                     C2Config::LEVEL_HEVC_MAIN_5_2,
-                                                     C2Config::LEVEL_HEVC_HIGH_4,
-                                                     C2Config::LEVEL_HEVC_HIGH_4_1,
-                                                     C2Config::LEVEL_HEVC_HIGH_5,
-                                                     C2Config::LEVEL_HEVC_HIGH_5_1,
-                                                     C2Config::LEVEL_HEVC_HIGH_5_2})})
-                        .withSetter(ProfileLevelSetter)
-                        .build());
+        addParameter(DefineParam(mProfileLevel, C2_PARAMKEY_PROFILE_LEVEL)
+                             .withDefault(new C2StreamProfileLevelInfo::input(
+                                     0u, static_cast<C2Config::profile_t>(defaultProfile),
+                                     C2Config::LEVEL_HEVC_MAIN_5_1))
+                             .withFields({C2F(mProfileLevel, profile).oneOf(profiles),
+                                          C2F(mProfileLevel, level)
+                                                  .oneOf({C2Config::LEVEL_HEVC_MAIN_1,
+                                                          C2Config::LEVEL_HEVC_MAIN_2,
+                                                          C2Config::LEVEL_HEVC_MAIN_2_1,
+                                                          C2Config::LEVEL_HEVC_MAIN_3,
+                                                          C2Config::LEVEL_HEVC_MAIN_3_1,
+                                                          C2Config::LEVEL_HEVC_MAIN_4,
+                                                          C2Config::LEVEL_HEVC_MAIN_4_1,
+                                                          C2Config::LEVEL_HEVC_MAIN_5,
+                                                          C2Config::LEVEL_HEVC_MAIN_5_1,
+                                                          C2Config::LEVEL_HEVC_MAIN_5_2,
+                                                          C2Config::LEVEL_HEVC_HIGH_4,
+                                                          C2Config::LEVEL_HEVC_HIGH_4_1,
+                                                          C2Config::LEVEL_HEVC_HIGH_5,
+                                                          C2Config::LEVEL_HEVC_HIGH_5_1,
+                                                          C2Config::LEVEL_HEVC_HIGH_5_2})})
+                             .withSetter(ProfileLevelSetter)
+                             .build());
         break;
     }
 

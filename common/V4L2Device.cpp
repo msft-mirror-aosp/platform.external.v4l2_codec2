@@ -1905,6 +1905,43 @@ V4L2Device::SupportedDecodeProfiles V4L2Device::getSupportedDecodeProfiles(
     return supportedProfiles;
 }
 
+C2Config::profile_t V4L2Device::getDefaultProfile(VideoCodec codec) {
+    uint32_t queryId = 0;
+
+    switch (codec) {
+    case VideoCodec::H264:
+        queryId = V4L2_CID_MPEG_VIDEO_H264_PROFILE;
+        break;
+    case VideoCodec::VP8:
+        queryId = V4L2_CID_MPEG_VIDEO_VP8_PROFILE;
+        break;
+    case VideoCodec::VP9:
+        queryId = V4L2_CID_MPEG_VIDEO_VP9_PROFILE;
+        break;
+    case VideoCodec::HEVC:
+        queryId = V4L2_CID_MPEG_VIDEO_HEVC_PROFILE;
+        break;
+    default:
+        return C2Config::PROFILE_UNUSED;
+    }
+
+    // Call to query control which will return structure including
+    // index of default profile
+    v4l2_queryctrl queryCtrl = {};
+    queryCtrl.id = queryId;
+    if (ioctl(VIDIOC_QUERYCTRL, &queryCtrl) != 0) {
+        return C2Config::PROFILE_UNUSED;
+    }
+
+    v4l2_querymenu queryMenu = {};
+    queryMenu.id = queryCtrl.id;
+    queryMenu.index = queryCtrl.default_value;
+    if (ioctl(VIDIOC_QUERYMENU, &queryMenu) == 0) {
+        return v4L2ProfileToC2Profile(codec, queryMenu.index);
+    }
+    return C2Config::PROFILE_UNUSED;
+}
+
 V4L2Device::SupportedEncodeProfiles V4L2Device::getSupportedEncodeProfiles() {
     SupportedEncodeProfiles supportedProfiles;
 

@@ -16,6 +16,7 @@
 #include <media/stagefright/MediaDefs.h>
 #include <utils/Log.h>
 
+#include <v4l2_codec2/common/Common.h>
 #include <v4l2_codec2/common/V4L2ComponentCommon.h>
 #include <v4l2_codec2/common/V4L2Device.h>
 #include <v4l2_codec2/common/VideoTypes.h>
@@ -49,21 +50,6 @@ std::optional<VideoCodec> getCodecFromComponentName(const std::string& name) {
 
     ALOGE("Unknown name: %s", name.c_str());
     return std::nullopt;
-}
-
-// Check whether the specified profile is a valid profile for the specified codec.
-bool IsValidProfileForCodec(VideoCodec codec, C2Config::profile_t profile) {
-    switch (codec) {
-    case VideoCodec::H264:
-        return ((profile >= C2Config::PROFILE_AVC_BASELINE) &&
-                (profile <= C2Config::PROFILE_AVC_ENHANCED_MULTIVIEW_DEPTH_HIGH));
-    case VideoCodec::VP8:
-        return ((profile >= C2Config::PROFILE_VP8_0) && (profile <= C2Config::PROFILE_VP8_3));
-    case VideoCodec::VP9:
-        return ((profile >= C2Config::PROFILE_VP9_0) && (profile <= C2Config::PROFILE_VP9_3));
-    default:
-        return false;
-    }
 }
 
 }  // namespace
@@ -265,7 +251,7 @@ void V4L2EncodeInterface::Initialize(const C2String& name) {
     std::vector<unsigned int> profiles;
     ui::Size maxSize;
     for (const auto& supportedProfile : supported_profiles) {
-        if (!IsValidProfileForCodec(codec.value(), supportedProfile.profile)) {
+        if (!isValidProfileForCodec(codec.value(), supportedProfile.profile)) {
             continue;  // Ignore unrecognizable or unsupported profiles.
         }
         ALOGV("Queried c2_profile = 0x%x : max_size = %d x %d", supportedProfile.profile,

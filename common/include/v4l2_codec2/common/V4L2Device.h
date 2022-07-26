@@ -443,6 +443,8 @@ public:
     // Return supported profiles for encoder.
     SupportedEncodeProfiles getSupportedEncodeProfiles();
 
+    C2Config::profile_t getDefaultProfile(VideoCodec codec);
+
     // Start polling on this V4L2Device. |eventCallback| will be posted to the caller's sequence if
     // a buffer is ready to be dequeued and/or a V4L2 event has been posted. |errorCallback| will
     // be posted to the client's
