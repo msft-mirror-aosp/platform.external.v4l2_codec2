@@ -437,8 +437,7 @@ public:
 
     // Return supported profiles for decoder, including only profiles for given fourcc
     // |pixelFormats|.
-    SupportedDecodeProfiles getSupportedDecodeProfiles(const size_t numFormats,
-                                                       const uint32_t pixelFormats[]);
+    SupportedDecodeProfiles getSupportedDecodeProfiles(const std::vector<uint32_t>& pixelFormats);
 
     // Return supported profiles for encoder.
     SupportedEncodeProfiles getSupportedEncodeProfiles();
@@ -481,8 +480,8 @@ private:
     V4L2Device(const V4L2Device&) = delete;
     V4L2Device& operator=(const V4L2Device&) = delete;
 
-    SupportedDecodeProfiles enumerateSupportedDecodeProfiles(const size_t numFormats,
-                                                             const uint32_t pixelFormats[]);
+    SupportedDecodeProfiles enumerateSupportedDecodeProfiles(
+            const std::vector<uint32_t>& pixelFormats);
 
     SupportedEncodeProfiles enumerateSupportedEncodeProfiles();
 

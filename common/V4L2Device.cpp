@@ -1881,7 +1881,7 @@ std::vector<uint32_t> V4L2Device::enumerateSupportedPixelformats(v4l2_buf_type b
 }
 
 V4L2Device::SupportedDecodeProfiles V4L2Device::getSupportedDecodeProfiles(
-        const size_t numFormats, const uint32_t pixelFormats[]) {
+        const std::vector<uint32_t>& pixelFormats) {
     SupportedDecodeProfiles supportedProfiles;
 
     Type type = Type::kDecoder;
@@ -1892,7 +1892,7 @@ V4L2Device::SupportedDecodeProfiles V4L2Device::getSupportedDecodeProfiles(
             continue;
         }
 
-        const auto& profiles = enumerateSupportedDecodeProfiles(numFormats, pixelFormats);
+        const auto& profiles = enumerateSupportedDecodeProfiles(pixelFormats);
         supportedProfiles.insert(supportedProfiles.end(), profiles.begin(), profiles.end());
         closeDevice();
     }
@@ -1920,15 +1920,14 @@ V4L2Device::SupportedEncodeProfiles V4L2Device::getSupportedEncodeProfiles() {
 }
 
 V4L2Device::SupportedDecodeProfiles V4L2Device::enumerateSupportedDecodeProfiles(
-        const size_t numFormats, const uint32_t pixelFormats[]) {
+        const std::vector<uint32_t>& pixelFormats) {
     SupportedDecodeProfiles profiles;
 
     const auto& supportedPixelformats =
             enumerateSupportedPixelformats(V4L2_BUF_TYPE_VIDEO_OUTPUT_MPLANE);
 
     for (uint32_t pixelFormat : supportedPixelformats) {
-        if (std::find(pixelFormats, pixelFormats + numFormats, pixelFormat) ==
-            pixelFormats + numFormats)
+        if (std::find(pixelFormats.begin(), pixelFormats.end(), pixelFormat) == pixelFormats.end())
             continue;
 
         SupportedDecodeProfile profile;
