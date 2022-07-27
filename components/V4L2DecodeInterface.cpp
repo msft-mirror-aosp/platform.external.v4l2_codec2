@@ -137,15 +137,23 @@ V4L2DecodeInterface::V4L2DecodeInterface(const std::string& name,
         ALOGE("Failed to create V4L2 device");
     }
 
+    ui::Size maxSize(1, 1);
+
     std::vector<uint32_t> profiles;
     if (device) {
         V4L2Device::SupportedDecodeProfiles supportedProfiles =
                 device->getSupportedDecodeProfiles({VideoCodecToV4L2PixFmt(*mVideoCodec)});
         for (const auto& supportedProfile : supportedProfiles) {
-            if (isValidProfileForCodec(mVideoCodec.value(), supportedProfile.profile))
+            if (isValidProfileForCodec(mVideoCodec.value(), supportedProfile.profile)) {
                 profiles.push_back(static_cast<uint32_t>(supportedProfile.profile));
+                maxSize.setWidth(std::max(maxSize.width, supportedProfile.max_resolution.width));
+                maxSize.setHeight(std::max(maxSize.height, supportedProfile.max_resolution.height));
+            }
         }
     }
+
+    // In case of no supported profile or uninitialized device maxSize is set to default
+    if (maxSize == ui::Size(1, 1)) maxSize = ui::Size(4096, 4096);
 
     if (profiles.empty()) {
         ALOGW("No supported profiles for H264 codec");
@@ -310,10 +318,11 @@ V4L2DecodeInterface::V4L2DecodeInterface(const std::string& name,
     // In order to fasten the bootup time, we use the maximum supported size instead of querying the
     // capability from the V4L2 device.
     addParameter(DefineParam(mSize, C2_PARAMKEY_PICTURE_SIZE)
-                         .withDefault(new C2StreamPictureSizeInfo::output(0u, 320, 240))
+                         .withDefault(new C2StreamPictureSizeInfo::output(
+                                 0u, std::min(320, maxSize.width), std::min(240, maxSize.height)))
                          .withFields({
-                                 C2F(mSize, width).inRange(16, 4096, 16),
-                                 C2F(mSize, height).inRange(16, 4096, 16),
+                                 C2F(mSize, width).inRange(16, maxSize.width, 16),
+                                 C2F(mSize, height).inRange(16, maxSize.height, 16),
                          })
                          .withSetter(SizeSetter)
                          .build());
