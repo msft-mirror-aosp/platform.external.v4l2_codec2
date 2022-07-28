@@ -6,6 +6,7 @@
 //       versions (e.g. V4L2_PIX_FMT_VP8_FRAME)
 
 //#define LOG_NDEBUG 0
+#define ATRACE_TAG ATRACE_TAG_VIDEO
 #define LOG_TAG "V4L2Device"
 
 #include <v4l2_codec2/common/V4L2Device.h>
@@ -19,6 +20,7 @@
 #include <sys/eventfd.h>
 #include <sys/ioctl.h>
 #include <sys/mman.h>
+#include <utils/Trace.h>
 
 #include <algorithm>
 #include <mutex>
@@ -727,6 +729,7 @@ V4L2Queue::~V4L2Queue() {
 
 std::optional<struct v4l2_format> V4L2Queue::setFormat(uint32_t fourcc, const ui::Size& size,
                                                        size_t bufferSize, uint32_t stride) {
+    ATRACE_CALL();
     struct v4l2_format format = buildV4L2Format(mType, fourcc, size, bufferSize, stride);
     if (mDevice->ioctl(VIDIOC_S_FMT, &format) != 0 || format.fmt.pix_mp.pixelformat != fourcc) {
         ALOGEQ("Failed to set format (format_fourcc=0x%" PRIx32 ")", fourcc);
@@ -761,6 +764,7 @@ std::pair<std::optional<struct v4l2_format>, int> V4L2Queue::getFormat() {
 }
 
 size_t V4L2Queue::allocateBuffers(size_t count, enum v4l2_memory memory) {
+    ATRACE_CALL();
     DCHECK_CALLED_ON_VALID_SEQUENCE(mSequenceChecker);
     ALOG_ASSERT(!mFreeBuffers);
     ALOG_ASSERT(mQueuedBuffers.size() == 0u);
@@ -827,6 +831,7 @@ size_t V4L2Queue::allocateBuffers(size_t count, enum v4l2_memory memory) {
     ALOG_ASSERT(mFreeBuffers);
     ALOG_ASSERT(mFreeBuffers->size() == mBuffers.size());
     ALOG_ASSERT(mQueuedBuffers.size() == 0u);
+    reportTraceMetrics();
 
     return mBuffers.size();
 }
@@ -860,6 +865,7 @@ bool V4L2Queue::deallocateBuffers() {
 
     ALOG_ASSERT(!mFreeBuffers);
     ALOG_ASSERT(mQueuedBuffers.size() == 0u);
+    reportTraceMetrics();
 
     return true;
 }
@@ -903,6 +909,29 @@ std::optional<V4L2WritableBufferRef> V4L2Queue::getFreeBuffer(size_t requestedBu
                                                    mWeakThisFactory.GetWeakPtr());
 }
 
+void V4L2Queue::reportTraceMetrics() {
+    switch (mType) {
+    case V4L2_BUF_TYPE_VIDEO_CAPTURE:
+        FALLTHROUGH;
+    case V4L2_BUF_TYPE_VIDEO_CAPTURE_MPLANE:
+        ATRACE_INT("V4L2 CAPTURE streamon", isStreaming());
+        ATRACE_INT64("V4L2 CAPTURE buffers free", freeBuffersCount());
+        ATRACE_INT64("V4L2 CAPTURE buffers queued", queuedBuffersCount());
+        ATRACE_INT64("V4L2 CAPTURE buffers allocated", allocatedBuffersCount());
+        break;
+    case V4L2_BUF_TYPE_VIDEO_OUTPUT:
+        FALLTHROUGH;
+    case V4L2_BUF_TYPE_VIDEO_OUTPUT_MPLANE:
+        ATRACE_INT("V4L2 OUTPUT streamon", isStreaming());
+        ATRACE_INT64("V4L2 OUTPUT buffers free", freeBuffersCount());
+        ATRACE_INT64("V4L2 OUTPUT buffers queued", queuedBuffersCount());
+        ATRACE_INT64("V4L2 OUTPUT buffers allocated", allocatedBuffersCount());
+        break;
+    default:
+        break;
+    }
+}
+
 bool V4L2Queue::queueBuffer(struct v4l2_buffer* v4l2Buffer) {
     DCHECK_CALLED_ON_VALID_SEQUENCE(mSequenceChecker);
 
@@ -912,6 +941,8 @@ bool V4L2Queue::queueBuffer(struct v4l2_buffer* v4l2Buffer) {
         return false;
     }
 
+    ATRACE_ASYNC_BEGIN(V4L2Device::v4L2BufferTypeToATraceLabel(mType), v4l2Buffer->index);
+
     auto inserted = mQueuedBuffers.emplace(v4l2Buffer->index);
     if (!inserted.second) {
         ALOGE("Queuing buffer failed");
@@ -919,6 +950,8 @@ bool V4L2Queue::queueBuffer(struct v4l2_buffer* v4l2Buffer) {
     }
 
     mDevice->schedulePoll();
+
+    reportTraceMetrics();
 
     return true;
 }
@@ -961,11 +994,15 @@ std::pair<bool, V4L2ReadableBufferRef> V4L2Queue::dequeueBuffer() {
         }
     }
 
+    ATRACE_ASYNC_END(V4L2Device::v4L2BufferTypeToATraceLabel(mType), v4l2Buffer.index);
+
     auto it = mQueuedBuffers.find(v4l2Buffer.index);
     ALOG_ASSERT(it != mQueuedBuffers.end());
     mQueuedBuffers.erase(*it);
 
     if (queuedBuffersCount() > 0) mDevice->schedulePoll();
+
+    reportTraceMetrics();
 
     ALOG_ASSERT(mFreeBuffers);
     return std::make_pair(true, V4L2BufferRefFactory::CreateReadableRef(
@@ -991,6 +1028,7 @@ bool V4L2Queue::streamon() {
     }
 
     mIsStreaming = true;
+    reportTraceMetrics();
 
     return true;
 }
@@ -1017,6 +1055,8 @@ bool V4L2Queue::streamoff() {
     mQueuedBuffers.clear();
 
     mIsStreaming = false;
+
+    reportTraceMetrics();
 
     return true;
 }
@@ -1600,6 +1640,20 @@ const char* V4L2Device::v4L2BufferTypeToString(const enum v4l2_buf_type bufType)
         return "CAPTURE_MPLANE";
     default:
         return "UNKNOWN";
+    }
+}
+
+// static
+const char* V4L2Device::v4L2BufferTypeToATraceLabel(const enum v4l2_buf_type bufType) {
+    switch (bufType) {
+    case V4L2_BUF_TYPE_VIDEO_OUTPUT:
+    case V4L2_BUF_TYPE_VIDEO_OUTPUT_MPLANE:
+        return "V4L2 enqueued OUTPUT Buffer";
+    case V4L2_BUF_TYPE_VIDEO_CAPTURE:
+    case V4L2_BUF_TYPE_VIDEO_CAPTURE_MPLANE:
+        return "V4L2 enqueued CAPTURE Buffer";
+    default:
+        return "V4L2 enqueued Unknown Buffer";
     }
 }
 

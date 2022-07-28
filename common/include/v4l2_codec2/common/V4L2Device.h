@@ -287,6 +287,8 @@ private:
     // Called when clients request a buffer to be queued.
     bool queueBuffer(struct v4l2_buffer* v4l2Buffer);
 
+    void reportTraceMetrics();
+
     const enum v4l2_buf_type mType;
     enum v4l2_memory mMemory = V4L2_MEMORY_MMAP;
     bool mIsStreaming = false;
@@ -357,6 +359,9 @@ public:
 
     // Returns the printable name of a v4l2_buf_type.
     static const char* v4L2BufferTypeToString(const enum v4l2_buf_type bufType);
+
+    // Converts v4l2_buf_type to a string, used for tracing.
+    static const char* v4L2BufferTypeToATraceLabel(const enum v4l2_buf_type type);
 
     // Composes human readable string of v4l2_format.
     static std::string v4L2FormatToString(const struct v4l2_format& format);

@@ -3,6 +3,7 @@
 // found in the LICENSE file.
 
 //#define LOG_NDEBUG 0
+#define ATRACE_TAG ATRACE_TAG_VIDEO
 #define LOG_TAG "V4L2DecodeComponent"
 
 #include <v4l2_codec2/components/V4L2DecodeComponent.h>
@@ -23,6 +24,7 @@
 #include <cutils/properties.h>
 #include <log/log.h>
 #include <media/stagefright/foundation/ColorUtils.h>
+#include <utils/Trace.h>
 
 #include <v4l2_codec2/common/Common.h>
 #include <v4l2_codec2/common/H264NalParser.h>
@@ -228,6 +230,7 @@ c2_status_t V4L2DecodeComponent::start() {
 }
 
 void V4L2DecodeComponent::startTask(c2_status_t* status, ::base::WaitableEvent* done) {
+    ATRACE_CALL();
     ALOGV("%s()", __func__);
     ALOG_ASSERT(mDecoderTaskRunner->RunsTasksInCurrentSequence());
 
@@ -325,6 +328,7 @@ c2_status_t V4L2DecodeComponent::stop() {
 }
 
 void V4L2DecodeComponent::stopTask() {
+    ATRACE_CALL();
     ALOGV("%s()", __func__);
     ALOG_ASSERT(mDecoderTaskRunner->RunsTasksInCurrentSequence());
 
@@ -356,6 +360,7 @@ c2_status_t V4L2DecodeComponent::release() {
 }
 
 void V4L2DecodeComponent::releaseTask() {
+    ATRACE_CALL();
     ALOGV("%s()", __func__);
     ALOG_ASSERT(mDecoderTaskRunner->RunsTasksInCurrentSequence());
 
@@ -411,6 +416,8 @@ c2_status_t V4L2DecodeComponent::queue_nb(std::list<std::unique_ptr<C2Work>>* co
     }
 
     while (!items->empty()) {
+        ATRACE_ASYNC_BEGIN("C2Work", items->front()->input.ordinal.frameIndex.peekull());
+
         mDecoderTaskRunner->PostTask(FROM_HERE,
                                      ::base::BindOnce(&V4L2DecodeComponent::queueTask, mWeakThis,
                                                       std::move(items->front())));
@@ -420,6 +427,7 @@ c2_status_t V4L2DecodeComponent::queue_nb(std::list<std::unique_ptr<C2Work>>* co
 }
 
 void V4L2DecodeComponent::queueTask(std::unique_ptr<C2Work> work) {
+    ATRACE_CALL();
     ALOGV("%s(): flags=0x%x, index=%llu, timestamp=%llu", __func__, work->input.flags,
           work->input.ordinal.frameIndex.peekull(), work->input.ordinal.timestamp.peekull());
     ALOG_ASSERT(mDecoderTaskRunner->RunsTasksInCurrentSequence());
@@ -455,6 +463,7 @@ void V4L2DecodeComponent::queueTask(std::unique_ptr<C2Work> work) {
 }
 
 void V4L2DecodeComponent::pumpPendingWorks() {
+    ATRACE_CALL();
     ALOGV("%s()", __func__);
     ALOG_ASSERT(mDecoderTaskRunner->RunsTasksInCurrentSequence());
 
@@ -529,6 +538,7 @@ void V4L2DecodeComponent::pumpPendingWorks() {
 }
 
 void V4L2DecodeComponent::onDecodeDone(int32_t bitstreamId, VideoDecoder::DecodeStatus status) {
+    ATRACE_CALL();
     ALOGV("%s(bitstreamId=%d, status=%s)", __func__, bitstreamId,
           VideoDecoder::DecodeStatusToString(status));
     ALOG_ASSERT(mDecoderTaskRunner->RunsTasksInCurrentSequence());
@@ -602,6 +612,7 @@ void V4L2DecodeComponent::onOutputFrameReady(std::unique_ptr<VideoFrame> frame) 
 
 void V4L2DecodeComponent::detectNoShowFrameWorksAndReportIfFinished(
         const C2WorkOrdinalStruct& currOrdinal) {
+    ATRACE_CALL();
     ALOGV("%s()", __func__);
     ALOG_ASSERT(mDecoderTaskRunner->RunsTasksInCurrentSequence());
 
@@ -631,6 +642,7 @@ void V4L2DecodeComponent::detectNoShowFrameWorksAndReportIfFinished(
 }
 
 void V4L2DecodeComponent::pumpReportWork() {
+    ATRACE_CALL();
     ALOGV("%s()", __func__);
     ALOG_ASSERT(mDecoderTaskRunner->RunsTasksInCurrentSequence());
 
@@ -641,6 +653,7 @@ void V4L2DecodeComponent::pumpReportWork() {
 }
 
 bool V4L2DecodeComponent::reportWorkIfFinished(int32_t bitstreamId) {
+    ATRACE_CALL();
     ALOGV("%s(bitstreamId = %d)", __func__, bitstreamId);
     ALOG_ASSERT(mDecoderTaskRunner->RunsTasksInCurrentSequence());
 
@@ -675,6 +688,7 @@ bool V4L2DecodeComponent::reportWorkIfFinished(int32_t bitstreamId) {
 }
 
 bool V4L2DecodeComponent::reportEOSWork() {
+    ATRACE_CALL();
     ALOGV("%s()", __func__);
     ALOG_ASSERT(mDecoderTaskRunner->RunsTasksInCurrentSequence());
 
@@ -709,6 +723,7 @@ bool V4L2DecodeComponent::reportEOSWork() {
 }
 
 bool V4L2DecodeComponent::reportWork(std::unique_ptr<C2Work> work) {
+    ATRACE_CALL();
     ALOGV("%s(work=%llu)", __func__, work->input.ordinal.frameIndex.peekull());
     ALOG_ASSERT(mDecoderTaskRunner->RunsTasksInCurrentSequence());
 
@@ -718,6 +733,7 @@ bool V4L2DecodeComponent::reportWork(std::unique_ptr<C2Work> work) {
     }
 
     std::list<std::unique_ptr<C2Work>> finishedWorks;
+    ATRACE_ASYNC_END("C2Work", work->input.ordinal.frameIndex.peekull());
     finishedWorks.emplace_back(std::move(work));
     mListener->onWorkDone_nb(weak_from_this(), std::move(finishedWorks));
     return true;
@@ -725,6 +741,7 @@ bool V4L2DecodeComponent::reportWork(std::unique_ptr<C2Work> work) {
 
 c2_status_t V4L2DecodeComponent::flush_sm(
         flush_mode_t mode, std::list<std::unique_ptr<C2Work>>* const /* flushedWork */) {
+    ATRACE_CALL();
     ALOGV("%s()", __func__);
 
     auto currentState = mComponentState.load();
@@ -742,6 +759,7 @@ c2_status_t V4L2DecodeComponent::flush_sm(
 }
 
 void V4L2DecodeComponent::flushTask() {
+    ATRACE_CALL();
     ALOGV("%s()", __func__);
     ALOG_ASSERT(mDecoderTaskRunner->RunsTasksInCurrentSequence());
 
@@ -773,6 +791,7 @@ void V4L2DecodeComponent::reportAbandonedWorks() {
         if (!work->input.buffers.empty()) {
             work->input.buffers.front().reset();
         }
+        ATRACE_ASYNC_END("C2Work", work->input.ordinal.frameIndex.peekull());
     }
     if (!abandonedWorks.empty()) {
         if (!mListener) {
@@ -807,6 +826,7 @@ c2_status_t V4L2DecodeComponent::drain_nb(drain_mode_t mode) {
 }
 
 void V4L2DecodeComponent::drainTask() {
+    ATRACE_CALL();
     ALOGV("%s()", __func__);
     ALOG_ASSERT(mDecoderTaskRunner->RunsTasksInCurrentSequence());
 

@@ -3,6 +3,7 @@
 // found in the LICENSE file.
 
 //#define LOG_NDEBUG 0
+#define ATRACE_TAG ATRACE_TAG_VIDEO
 #define LOG_TAG "V4L2Decoder"
 
 #include <v4l2_codec2/components/V4L2Decoder.h>
@@ -16,6 +17,7 @@
 #include <base/files/scoped_file.h>
 #include <base/memory/ptr_util.h>
 #include <log/log.h>
+#include <utils/Trace.h>
 
 #include <v4l2_codec2/common/Common.h>
 #include <v4l2_codec2/common/Fourcc.h>
@@ -96,6 +98,7 @@ V4L2Decoder::~V4L2Decoder() {
 bool V4L2Decoder::start(const VideoCodec& codec, const size_t inputBufferSize,
                         const size_t minNumOutputBuffers, GetPoolCB getPoolCb, OutputCB outputCb,
                         ErrorCB errorCb) {
+    ATRACE_CALL();
     ALOGV("%s(codec=%s, inputBufferSize=%zu, minNumOutputBuffers=%zu)", __func__,
           VideoCodecToString(codec), inputBufferSize, minNumOutputBuffers);
     ALOG_ASSERT(mTaskRunner->RunsTasksInCurrentSequence());
@@ -195,6 +198,7 @@ bool V4L2Decoder::setupInputFormat(const uint32_t inputPixelFormat, const size_t
 }
 
 void V4L2Decoder::decode(std::unique_ptr<ConstBitstreamBuffer> buffer, DecodeCB decodeCb) {
+    ATRACE_CALL();
     ALOGV("%s(id=%d)", __func__, buffer->id);
     ALOG_ASSERT(mTaskRunner->RunsTasksInCurrentSequence());
 
@@ -214,6 +218,7 @@ void V4L2Decoder::decode(std::unique_ptr<ConstBitstreamBuffer> buffer, DecodeCB 
 }
 
 void V4L2Decoder::drain(DecodeCB drainCb) {
+    ATRACE_CALL();
     ALOGV("%s()", __func__);
     ALOG_ASSERT(mTaskRunner->RunsTasksInCurrentSequence());
 
@@ -239,6 +244,7 @@ void V4L2Decoder::drain(DecodeCB drainCb) {
 }
 
 void V4L2Decoder::pumpDecodeRequest() {
+    ATRACE_CALL();
     ALOGV("%s()", __func__);
     ALOG_ASSERT(mTaskRunner->RunsTasksInCurrentSequence());
 
@@ -314,6 +320,7 @@ void V4L2Decoder::pumpDecodeRequest() {
 }
 
 void V4L2Decoder::flush() {
+    ATRACE_CALL();
     ALOGV("%s()", __func__);
     ALOG_ASSERT(mTaskRunner->RunsTasksInCurrentSequence());
 
@@ -366,6 +373,7 @@ void V4L2Decoder::flush() {
 }
 
 void V4L2Decoder::serviceDeviceTask(bool event) {
+    ATRACE_CALL();
     ALOGV("%s(event=%d) state=%s InputQueue(%s):%zu+%zu/%zu, OutputQueue(%s):%zu+%zu/%zu", __func__,
           event, StateToString(mState), (mInputQueue->isStreaming() ? "streamon" : "streamoff"),
           mInputQueue->freeBuffersCount(), mInputQueue->queuedBuffersCount(),
@@ -373,6 +381,7 @@ void V4L2Decoder::serviceDeviceTask(bool event) {
           (mOutputQueue->isStreaming() ? "streamon" : "streamoff"),
           mOutputQueue->freeBuffersCount(), mOutputQueue->queuedBuffersCount(),
           mOutputQueue->allocatedBuffersCount());
+
     ALOG_ASSERT(mTaskRunner->RunsTasksInCurrentSequence());
 
     if (mState == State::Error) return;
@@ -482,6 +491,7 @@ void V4L2Decoder::serviceDeviceTask(bool event) {
 }
 
 bool V4L2Decoder::dequeueResolutionChangeEvent() {
+    ATRACE_CALL();
     ALOGV("%s()", __func__);
     ALOG_ASSERT(mTaskRunner->RunsTasksInCurrentSequence());
 
@@ -497,6 +507,7 @@ bool V4L2Decoder::dequeueResolutionChangeEvent() {
 }
 
 bool V4L2Decoder::changeResolution() {
+    ATRACE_CALL();
     ALOGV("%s()", __func__);
     ALOG_ASSERT(mTaskRunner->RunsTasksInCurrentSequence());
 
@@ -577,6 +588,7 @@ bool V4L2Decoder::setupOutputFormat(const ui::Size& size) {
 }
 
 void V4L2Decoder::tryFetchVideoFrame() {
+    ATRACE_CALL();
     ALOGV("%s()", __func__);
     ALOG_ASSERT(mTaskRunner->RunsTasksInCurrentSequence());
 
