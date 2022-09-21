@@ -53,11 +53,11 @@ uint32_t VideoCodecToV4L2PixFmt(VideoCodec codec) {
 
 // static
 std::unique_ptr<VideoDecoder> V4L2Decoder::Create(
-        const VideoCodec& codec, const size_t inputBufferSize, const size_t minNumOutputBuffers,
-        GetPoolCB getPoolCb, OutputCB outputCb, ErrorCB errorCb,
+        uint32_t debugStreamId, const VideoCodec& codec, const size_t inputBufferSize,
+        const size_t minNumOutputBuffers, GetPoolCB getPoolCb, OutputCB outputCb, ErrorCB errorCb,
         scoped_refptr<::base::SequencedTaskRunner> taskRunner) {
     std::unique_ptr<V4L2Decoder> decoder =
-            ::base::WrapUnique<V4L2Decoder>(new V4L2Decoder(taskRunner));
+            ::base::WrapUnique<V4L2Decoder>(new V4L2Decoder(debugStreamId, taskRunner));
     if (!decoder->start(codec, inputBufferSize, minNumOutputBuffers, std::move(getPoolCb),
                         std::move(outputCb), std::move(errorCb))) {
         return nullptr;
@@ -65,8 +65,9 @@ std::unique_ptr<VideoDecoder> V4L2Decoder::Create(
     return decoder;
 }
 
-V4L2Decoder::V4L2Decoder(scoped_refptr<::base::SequencedTaskRunner> taskRunner)
-      : mTaskRunner(std::move(taskRunner)) {
+V4L2Decoder::V4L2Decoder(uint32_t debugStreamId,
+                         scoped_refptr<::base::SequencedTaskRunner> taskRunner)
+      : mDebugStreamId(debugStreamId), mTaskRunner(std::move(taskRunner)) {
     ALOGV("%s()", __func__);
 
     mWeakThis = mWeakThisFactory.GetWeakPtr();
@@ -113,7 +114,7 @@ bool V4L2Decoder::start(const VideoCodec& codec, const size_t inputBufferSize,
         return false;
     }
 
-    mDevice = V4L2Device::create();
+    mDevice = V4L2Device::create(mDebugStreamId);
 
     const uint32_t inputPixelFormat = VideoCodecToV4L2PixFmt(codec);
     if (!mDevice->open(V4L2Device::Type::kDecoder, inputPixelFormat)) {

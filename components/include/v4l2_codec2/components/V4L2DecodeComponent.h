@@ -29,7 +29,7 @@ public:
     static std::shared_ptr<C2Component> create(const std::string& name, c2_node_id_t id,
                                                const std::shared_ptr<C2ReflectorHelper>& helper,
                                                C2ComponentFactory::ComponentDeleter deleter);
-    V4L2DecodeComponent(const std::string& name, c2_node_id_t id,
+    V4L2DecodeComponent(uint32_t debugStreamId, const std::string& name, c2_node_id_t id,
                         const std::shared_ptr<C2ReflectorHelper>& helper,
                         const std::shared_ptr<V4L2DecodeInterface>& intfImpl);
     ~V4L2DecodeComponent() override;
@@ -93,6 +93,10 @@ private:
     void reportError(c2_status_t error);
 
     static std::atomic<int32_t> sConcurrentInstances;
+    static std::atomic<uint32_t> sNextDebugStreamId;
+
+    // Identifier used for debugging purposes.
+    uint32_t mDebugStreamId;
 
     // The pointer of component interface implementation.
     std::shared_ptr<V4L2DecodeInterface> mIntfImpl;

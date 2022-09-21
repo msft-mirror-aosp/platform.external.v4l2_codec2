@@ -13,6 +13,7 @@
 #include <stddef.h>
 #include <stdint.h>
 
+#include <cstdint>
 #include <optional>
 #include <vector>
 
@@ -361,7 +362,9 @@ public:
     static const char* v4L2BufferTypeToString(const enum v4l2_buf_type bufType);
 
     // Converts v4l2_buf_type to a string, used for tracing.
-    static const char* v4L2BufferTypeToATraceLabel(const enum v4l2_buf_type type);
+    static std::string v4L2BufferTypeToATraceLabel(uint32_t debugStreamId,
+                                                   const enum v4l2_buf_type type,
+                                                   const char* label);
 
     // Composes human readable string of v4l2_format.
     static std::string v4L2FormatToString(const struct v4l2_format& format);
@@ -380,7 +383,7 @@ public:
 
     // Create and initialize an appropriate V4L2Device instance for the current platform, or return
     // nullptr if not available.
-    static scoped_refptr<V4L2Device> create();
+    static scoped_refptr<V4L2Device> create(uint32_t debugStreamId = -1);
 
     // Open a V4L2 device of |type| for use with |v4l2PixFmt|. Return true on success. The device
     // will be closed in the destructor.
@@ -464,12 +467,15 @@ public:
     // Check whether the V4L2 device has the specified |capabilities|.
     bool hasCapabilities(uint32_t capabilities);
 
+    // Returns identifier used for debugging purposes.
+    uint32_t getDebugStreamId() { return mDebugStreamId; }
+
 private:
     // Vector of video device node paths and corresponding pixelformats supported by each device node.
     using Devices = std::vector<std::pair<std::string, std::vector<uint32_t>>>;
 
     friend class base::RefCountedThreadSafe<V4L2Device>;
-    V4L2Device();
+    V4L2Device(uint32_t debugStreamId);
     ~V4L2Device();
 
     V4L2Device(const V4L2Device&) = delete;
@@ -500,6 +506,9 @@ private:
 
     // Callback that is called upon a queue's destruction, to cleanup its pointer in mQueues.
     void onQueueDestroyed(v4l2_buf_type buf_type);
+
+    // Identifier used for debugging purposes.
+    uint32_t mDebugStreamId;
 
     // Stores information for all devices available on the system for each device Type.
     std::map<V4L2Device::Type, Devices> mDevicesByType;

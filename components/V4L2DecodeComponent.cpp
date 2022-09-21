@@ -20,6 +20,7 @@
 #include <SimpleC2Interface.h>
 #include <base/bind.h>
 #include <base/callback_helpers.h>
+#include <base/strings/stringprintf.h>
 #include <base/time/time.h>
 #include <cutils/properties.h>
 #include <log/log.h>
@@ -153,6 +154,9 @@ bool isNoShowFrameWork(const C2Work& work, const C2WorkOrdinalStruct& currOrdina
 std::atomic<int32_t> V4L2DecodeComponent::sConcurrentInstances = 0;
 
 // static
+std::atomic<uint32_t> V4L2DecodeComponent::sNextDebugStreamId = 0;
+
+// static
 std::shared_ptr<C2Component> V4L2DecodeComponent::create(
         const std::string& name, c2_node_id_t id, const std::shared_ptr<C2ReflectorHelper>& helper,
         C2ComponentFactory::ComponentDeleter deleter) {
@@ -165,6 +169,8 @@ std::shared_ptr<C2Component> V4L2DecodeComponent::create(
     if (kMaxConcurrentInstances >= 0 && sConcurrentInstances.load() >= kMaxConcurrentInstances) {
         ALOGW("Reject to Initialize() due to too many instances: %d", sConcurrentInstances.load());
         return nullptr;
+    } else if (sConcurrentInstances.load() == 0) {
+        sNextDebugStreamId.store(0, std::memory_order_relaxed);
     }
 
     auto intfImpl = std::make_shared<V4L2DecodeInterface>(name, helper);
@@ -173,14 +179,17 @@ std::shared_ptr<C2Component> V4L2DecodeComponent::create(
         return nullptr;
     }
 
-    return std::shared_ptr<C2Component>(new V4L2DecodeComponent(name, id, helper, intfImpl),
-                                        deleter);
+    uint32_t debugStreamId = sNextDebugStreamId.fetch_add(1, std::memory_order_relaxed);
+    return std::shared_ptr<C2Component>(
+            new V4L2DecodeComponent(debugStreamId, name, id, helper, intfImpl), deleter);
 }
 
-V4L2DecodeComponent::V4L2DecodeComponent(const std::string& name, c2_node_id_t id,
+V4L2DecodeComponent::V4L2DecodeComponent(uint32_t debugStreamId, const std::string& name,
+                                         c2_node_id_t id,
                                          const std::shared_ptr<C2ReflectorHelper>& helper,
                                          const std::shared_ptr<V4L2DecodeInterface>& intfImpl)
-      : mIntfImpl(intfImpl),
+      : mDebugStreamId(debugStreamId),
+        mIntfImpl(intfImpl),
         mIntf(std::make_shared<SimpleInterface<V4L2DecodeInterface>>(name.c_str(), id, mIntfImpl)) {
     ALOGV("%s(%s)", __func__, name.c_str());
 
@@ -248,7 +257,7 @@ void V4L2DecodeComponent::startTask(c2_status_t* status, ::base::WaitableEvent* 
 
     // ::base::Unretained(this) is safe here because |mDecoder| is always destroyed before
     // |mDecoderThread| is stopped, so |*this| is always valid during |mDecoder|'s lifetime.
-    mDecoder = V4L2Decoder::Create(*codec, inputBufferSize, minNumOutputBuffers,
+    mDecoder = V4L2Decoder::Create(mDebugStreamId, *codec, inputBufferSize, minNumOutputBuffers,
                                    ::base::BindRepeating(&V4L2DecodeComponent::getVideoFramePool,
                                                          ::base::Unretained(this)),
                                    ::base::BindRepeating(&V4L2DecodeComponent::onOutputFrameReady,
@@ -416,7 +425,11 @@ c2_status_t V4L2DecodeComponent::queue_nb(std::list<std::unique_ptr<C2Work>>* co
     }
 
     while (!items->empty()) {
-        ATRACE_ASYNC_BEGIN("C2Work", items->front()->input.ordinal.frameIndex.peekull());
+        if (ATRACE_ENABLED()) {
+            const std::string atraceLabel = base::StringPrintf("#%u C2Work", mDebugStreamId);
+            ATRACE_ASYNC_BEGIN(atraceLabel.c_str(),
+                               items->front()->input.ordinal.frameIndex.peekull());
+        }
 
         mDecoderTaskRunner->PostTask(FROM_HERE,
                                      ::base::BindOnce(&V4L2DecodeComponent::queueTask, mWeakThis,
@@ -732,8 +745,11 @@ bool V4L2DecodeComponent::reportWork(std::unique_ptr<C2Work> work) {
         return false;
     }
 
+    if (ATRACE_ENABLED()) {
+        const std::string atraceLabel = base::StringPrintf("#%u C2Work", mDebugStreamId);
+        ATRACE_ASYNC_END(atraceLabel.c_str(), work->input.ordinal.frameIndex.peekull());
+    }
     std::list<std::unique_ptr<C2Work>> finishedWorks;
-    ATRACE_ASYNC_END("C2Work", work->input.ordinal.frameIndex.peekull());
     finishedWorks.emplace_back(std::move(work));
     mListener->onWorkDone_nb(weak_from_this(), std::move(finishedWorks));
     return true;
@@ -791,7 +807,11 @@ void V4L2DecodeComponent::reportAbandonedWorks() {
         if (!work->input.buffers.empty()) {
             work->input.buffers.front().reset();
         }
-        ATRACE_ASYNC_END("C2Work", work->input.ordinal.frameIndex.peekull());
+
+        if (ATRACE_ENABLED()) {
+            const std::string atraceLabel = base::StringPrintf("#%u C2Work", mDebugStreamId);
+            ATRACE_ASYNC_END(atraceLabel.c_str(), work->input.ordinal.frameIndex.peekull());
+        }
     }
     if (!abandonedWorks.empty()) {
         if (!mListener) {

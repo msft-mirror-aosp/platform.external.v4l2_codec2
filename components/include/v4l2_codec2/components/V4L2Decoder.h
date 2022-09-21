@@ -7,6 +7,7 @@
 
 #include <stdint.h>
 
+#include <cstdint>
 #include <memory>
 #include <optional>
 
@@ -26,9 +27,9 @@ namespace android {
 class V4L2Decoder : public VideoDecoder {
 public:
     static std::unique_ptr<VideoDecoder> Create(
-            const VideoCodec& codec, const size_t inputBufferSize, const size_t minNumOutputBuffers,
-            GetPoolCB getPoolCB, OutputCB outputCb, ErrorCB errorCb,
-            scoped_refptr<::base::SequencedTaskRunner> taskRunner);
+            uint32_t debugStreamId, const VideoCodec& codec, const size_t inputBufferSize,
+            const size_t minNumOutputBuffers, GetPoolCB getPoolCB, OutputCB outputCb,
+            ErrorCB errorCb, scoped_refptr<::base::SequencedTaskRunner> taskRunner);
     ~V4L2Decoder() override;
 
     void decode(std::unique_ptr<ConstBitstreamBuffer> buffer, DecodeCB decodeCb) override;
@@ -54,7 +55,7 @@ private:
         DecodeCB decodeCb;
     };
 
-    V4L2Decoder(scoped_refptr<::base::SequencedTaskRunner> taskRunner);
+    V4L2Decoder(uint32_t debugStreamId, scoped_refptr<::base::SequencedTaskRunner> taskRunner);
     bool start(const VideoCodec& codec, const size_t inputBufferSize,
                const size_t minNumOutputBuffers, GetPoolCB getPoolCb, OutputCB outputCb,
                ErrorCB errorCb);
@@ -76,6 +77,8 @@ private:
 
     void setState(State newState);
     void onError();
+
+    uint32_t mDebugStreamId;
 
     std::unique_ptr<VideoFramePool> mVideoFramePool;
 

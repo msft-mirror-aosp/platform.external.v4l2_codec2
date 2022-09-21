@@ -910,26 +910,26 @@ std::optional<V4L2WritableBufferRef> V4L2Queue::getFreeBuffer(size_t requestedBu
 }
 
 void V4L2Queue::reportTraceMetrics() {
-    switch (mType) {
-    case V4L2_BUF_TYPE_VIDEO_CAPTURE:
-        FALLTHROUGH;
-    case V4L2_BUF_TYPE_VIDEO_CAPTURE_MPLANE:
-        ATRACE_INT("V4L2 CAPTURE streamon", isStreaming());
-        ATRACE_INT64("V4L2 CAPTURE buffers free", freeBuffersCount());
-        ATRACE_INT64("V4L2 CAPTURE buffers queued", queuedBuffersCount());
-        ATRACE_INT64("V4L2 CAPTURE buffers allocated", allocatedBuffersCount());
-        break;
-    case V4L2_BUF_TYPE_VIDEO_OUTPUT:
-        FALLTHROUGH;
-    case V4L2_BUF_TYPE_VIDEO_OUTPUT_MPLANE:
-        ATRACE_INT("V4L2 OUTPUT streamon", isStreaming());
-        ATRACE_INT64("V4L2 OUTPUT buffers free", freeBuffersCount());
-        ATRACE_INT64("V4L2 OUTPUT buffers queued", queuedBuffersCount());
-        ATRACE_INT64("V4L2 OUTPUT buffers allocated", allocatedBuffersCount());
-        break;
-    default:
-        break;
-    }
+    // Don't printf labels if ATrace is not enabled
+    if (!ATRACE_ENABLED()) return;
+
+    std::string atraceLabel;
+
+    atraceLabel =
+            V4L2Device::v4L2BufferTypeToATraceLabel(mDevice->getDebugStreamId(), mType, "streamon");
+    ATRACE_INT(atraceLabel.c_str(), isStreaming());
+
+    atraceLabel = V4L2Device::v4L2BufferTypeToATraceLabel(mDevice->getDebugStreamId(), mType,
+                                                          "buffers free");
+    ATRACE_INT64(atraceLabel.c_str(), freeBuffersCount());
+
+    atraceLabel = V4L2Device::v4L2BufferTypeToATraceLabel(mDevice->getDebugStreamId(), mType,
+                                                          "buffers queued");
+    ATRACE_INT64(atraceLabel.c_str(), queuedBuffersCount());
+
+    atraceLabel = V4L2Device::v4L2BufferTypeToATraceLabel(mDevice->getDebugStreamId(), mType,
+                                                          "buffers allocated");
+    ATRACE_INT64(atraceLabel.c_str(), allocatedBuffersCount());
 }
 
 bool V4L2Queue::queueBuffer(struct v4l2_buffer* v4l2Buffer) {
@@ -941,7 +941,11 @@ bool V4L2Queue::queueBuffer(struct v4l2_buffer* v4l2Buffer) {
         return false;
     }
 
-    ATRACE_ASYNC_BEGIN(V4L2Device::v4L2BufferTypeToATraceLabel(mType), v4l2Buffer->index);
+    if (ATRACE_ENABLED()) {
+        std::string atraceLabel = V4L2Device::v4L2BufferTypeToATraceLabel(
+                mDevice->getDebugStreamId(), mType, "enqueued buffer");
+        ATRACE_ASYNC_BEGIN(atraceLabel.c_str(), v4l2Buffer->index);
+    }
 
     auto inserted = mQueuedBuffers.emplace(v4l2Buffer->index);
     if (!inserted.second) {
@@ -994,7 +998,11 @@ std::pair<bool, V4L2ReadableBufferRef> V4L2Queue::dequeueBuffer() {
         }
     }
 
-    ATRACE_ASYNC_END(V4L2Device::v4L2BufferTypeToATraceLabel(mType), v4l2Buffer.index);
+    if (ATRACE_ENABLED()) {
+        std::string atraceLabel = V4L2Device::v4L2BufferTypeToATraceLabel(
+                mDevice->getDebugStreamId(), mType, "enqueued buffer");
+        ATRACE_ASYNC_END(atraceLabel.c_str(), v4l2Buffer.index);
+    }
 
     auto it = mQueuedBuffers.find(v4l2Buffer.index);
     ALOG_ASSERT(it != mQueuedBuffers.end());
@@ -1093,7 +1101,7 @@ public:
     }
 };
 
-V4L2Device::V4L2Device() {
+V4L2Device::V4L2Device(uint32_t debugStreamId) : mDebugStreamId(debugStreamId) {
     DETACH_FROM_SEQUENCE(mClientSequenceChecker);
 }
 
@@ -1135,9 +1143,9 @@ void V4L2Device::onQueueDestroyed(v4l2_buf_type bufType) {
 }
 
 // static
-scoped_refptr<V4L2Device> V4L2Device::create() {
+scoped_refptr<V4L2Device> V4L2Device::create(uint32_t debugStreamId) {
     ALOGV("%s()", __func__);
-    return scoped_refptr<V4L2Device>(new V4L2Device());
+    return scoped_refptr<V4L2Device>(new V4L2Device(debugStreamId));
 }
 
 bool V4L2Device::open(Type type, uint32_t v4l2PixFmt) {
@@ -1644,17 +1652,27 @@ const char* V4L2Device::v4L2BufferTypeToString(const enum v4l2_buf_type bufType)
 }
 
 // static
-const char* V4L2Device::v4L2BufferTypeToATraceLabel(const enum v4l2_buf_type bufType) {
-    switch (bufType) {
-    case V4L2_BUF_TYPE_VIDEO_OUTPUT:
-    case V4L2_BUF_TYPE_VIDEO_OUTPUT_MPLANE:
-        return "V4L2 enqueued OUTPUT Buffer";
+std::string V4L2Device::v4L2BufferTypeToATraceLabel(uint32_t debugStreamId,
+                                                    const enum v4l2_buf_type type,
+                                                    const char* label) {
+    const char* queueName;
+    switch (type) {
     case V4L2_BUF_TYPE_VIDEO_CAPTURE:
+        FALLTHROUGH;
     case V4L2_BUF_TYPE_VIDEO_CAPTURE_MPLANE:
-        return "V4L2 enqueued CAPTURE Buffer";
+        queueName = "CAPTURE";
+        break;
+    case V4L2_BUF_TYPE_VIDEO_OUTPUT:
+        FALLTHROUGH;
+    case V4L2_BUF_TYPE_VIDEO_OUTPUT_MPLANE:
+        queueName = "OUTPUT";
+        break;
     default:
-        return "V4L2 enqueued Unknown Buffer";
+        queueName = "";
+        break;
     }
+
+    return base::StringPrintf("#%u V4L2 %s %s", debugStreamId, queueName, label);
 }
 
 // static
