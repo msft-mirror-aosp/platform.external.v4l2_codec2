@@ -263,6 +263,15 @@ void V4L2Decoder::pumpDecodeRequest() {
                 return;
             }
 
+            // If output queue is not streaming, then device is unable to notify
+            // whenever draining is finished. (EOS frame cannot be dequeued).
+            // This is likely to happen in the event of that the first resolution
+            // change event wasn't dequeued before the drain request.
+            if (!mOutputQueue->isStreaming()) {
+                ALOGV("Wait for output queue to start streaming");
+                return;
+            }
+
             auto request = std::move(mDecodeRequests.front());
             mDecodeRequests.pop();
 
@@ -578,6 +587,14 @@ bool V4L2Decoder::changeResolution() {
     if (!mOutputQueue->streamon()) {
         ALOGE("Failed to streamon output queue.");
         return false;
+    }
+
+    // If drain request is pending then it means that previous call to pumpDecodeRequest
+    // stalled the request, bacause there was no way of notifing the component that
+    // drain has finished. Send this request the drain to device.
+    if (!mDecodeRequests.empty() && mDecodeRequests.front().buffer == nullptr) {
+        mTaskRunner->PostTask(FROM_HERE,
+                              ::base::BindOnce(&V4L2Decoder::pumpDecodeRequest, mWeakThis));
     }
 
     // Release the previous VideoFramePool before getting a new one to guarantee only one pool
