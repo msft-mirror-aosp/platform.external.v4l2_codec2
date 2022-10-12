@@ -22,8 +22,6 @@ namespace android {
 V4L2DevicePoller::V4L2DevicePoller(V4L2Device* const device, const std::string& threadName)
       : mDevice(device),
         mPollThread(std::move(threadName)),
-        mTriggerPoll(base::WaitableEvent::ResetPolicy::AUTOMATIC,
-                     base::WaitableEvent::InitialState::NOT_SIGNALED),
         mStopPolling(false) {}
 
 V4L2DevicePoller::~V4L2DevicePoller() {
@@ -50,6 +48,7 @@ bool V4L2DevicePoller::startPolling(EventCallback eventCallback,
 
     mEventCallback = std::move(eventCallback);
 
+    mPollBuffers.store(false);
     mStopPolling.store(false);
     mPollThread.task_runner()->PostTask(
             FROM_HERE, base::BindOnce(&V4L2DevicePoller::devicePollTask, base::Unretained(this)));
@@ -69,8 +68,6 @@ bool V4L2DevicePoller::stopPolling() {
     ALOGV("Stopping polling");
 
     mStopPolling.store(true);
-
-    mTriggerPoll.Signal();
 
     if (!mDevice->setDevicePollInterrupt()) {
         ALOGE("Failed to interrupt device poll.");
@@ -102,9 +99,14 @@ void V4L2DevicePoller::schedulePoll() {
     // A call to DevicePollTask() will be posted when we actually start polling.
     if (!isPolling()) return;
 
-    ALOGV("Scheduling poll");
-
-    mTriggerPoll.Signal();
+    if (!mPollBuffers.exchange(true)) {
+        // Call mDevice->setDevicePollInterrupt only if pollBuffers is not
+        // already pending.
+        ALOGV("Scheduling poll");
+        if (!mDevice->setDevicePollInterrupt()) {
+            ALOGE("Failed to clear interrupting device poll.");
+        }
+    }
 }
 
 void V4L2DevicePoller::devicePollTask() {
@@ -112,7 +114,6 @@ void V4L2DevicePoller::devicePollTask() {
 
     while (true) {
         ALOGV("Waiting for poll to be scheduled.");
-        mTriggerPoll.Wait();
 
         if (mStopPolling) {
             ALOGV("Poll stopped, exiting.");
@@ -120,15 +121,31 @@ void V4L2DevicePoller::devicePollTask() {
         }
 
         bool event_pending = false;
+        bool buffers_pending = false;
+
         ALOGV("Polling device.");
-        if (!mDevice->poll(true, &event_pending)) {
+        bool poll_buffers = mPollBuffers.exchange(false);
+        if (!mDevice->poll(true, poll_buffers, &event_pending, &buffers_pending)) {
             ALOGE("An error occurred while polling, calling error callback");
             mClientTaskTunner->PostTask(FROM_HERE, mErrorCallback);
             return;
         }
 
-        ALOGV("Poll returned, calling event callback.");
-        mClientTaskTunner->PostTask(FROM_HERE, base::Bind(mEventCallback, event_pending));
+        if (poll_buffers && !buffers_pending) {
+            // If buffer polling was requested but the buffers are not pending,
+            // then set to poll buffers again in the next iteration.
+            mPollBuffers.exchange(true);
+        }
+
+        if (!mDevice->clearDevicePollInterrupt()) {
+            ALOGE("Failed to clear interrupting device poll.");
+        }
+
+        if (buffers_pending || event_pending) {
+            ALOGV("Poll returned, calling event callback. event_pending=%d buffers_pending=%d",
+                  event_pending, buffers_pending);
+            mClientTaskTunner->PostTask(FROM_HERE, base::Bind(mEventCallback, event_pending));
+        }
     }
 }
 

@@ -398,11 +398,12 @@ public:
 
     // This method sleeps until either:
     // - SetDevicePollInterrupt() is called (on another thread),
-    // - |pollDevice| is true, and there is new data to be read from the device,
-    //   or an event from the device has arrived; in the latter case
-    //   |*eventPending| will be set to true.
+    // - |pollDevice| is true, and there is new event from the device has arrived;
+    //   in this case |*eventPending| will be set to true.
+    // - |pollBuffers| is true and |pollDevice| is true and there is new data to
+    //   be read from the device; in this case |*buffersPending| will be set to true.
     // Returns false on error, true otherwise. This method should be called from a separate thread.
-    bool poll(bool pollDevice, bool* eventPending);
+    bool poll(bool pollDevice, bool pollBuffers, bool* eventPending, bool* buffersPending);
 
     // These methods are used to interrupt the thread sleeping on poll() and force it to return
     // regardless of device state, which is usually when the client is no longer interested in what

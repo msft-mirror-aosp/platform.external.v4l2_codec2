@@ -1178,7 +1178,7 @@ int V4L2Device::ioctl(int request, void* arg) {
     return HANDLE_EINTR(::ioctl(mDeviceFd.get(), request, arg));
 }
 
-bool V4L2Device::poll(bool pollDevice, bool* eventPending) {
+bool V4L2Device::poll(bool pollDevice, bool pollBuffers, bool* eventPending, bool* buffersPending) {
     struct pollfd pollfds[2];
     nfds_t nfds;
     int pollfd = -1;
@@ -1190,7 +1190,11 @@ bool V4L2Device::poll(bool pollDevice, bool* eventPending) {
     if (pollDevice) {
         ALOGV("adding device fd to poll() set");
         pollfds[nfds].fd = mDeviceFd.get();
-        pollfds[nfds].events = POLLIN | POLLOUT | POLLERR | POLLPRI;
+        pollfds[nfds].events = POLLERR | POLLPRI;
+        if (pollBuffers) {
+            ALOGV("will poll buffers");
+            pollfds[nfds].events |= POLLIN | POLLOUT;
+        }
         pollfd = nfds;
         nfds++;
     }
@@ -1200,6 +1204,7 @@ bool V4L2Device::poll(bool pollDevice, bool* eventPending) {
         return false;
     }
     *eventPending = (pollfd != -1 && pollfds[pollfd].revents & POLLPRI);
+    *buffersPending = (pollfd != -1 && pollfds[pollfd].revents & (POLLIN | POLLOUT));
     return true;
 }
 
