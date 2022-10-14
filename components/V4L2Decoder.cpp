@@ -21,11 +21,11 @@
 
 #include <v4l2_codec2/common/Common.h>
 #include <v4l2_codec2/common/Fourcc.h>
+#include <v4l2_codec2/plugin_store/DmabufHelpers.h>
 
 namespace android {
 namespace {
 
-constexpr size_t kNumInputBuffers = 16;
 // Extra buffers for transmitting in the whole video pipeline.
 constexpr size_t kNumExtraOutputBuffers = 4;
 
@@ -283,12 +283,44 @@ void V4L2Decoder::pumpDecodeRequest() {
             return;
         }
 
+        auto dma_buf_id = getDmabufId(mDecodeRequests.front().buffer->dmabuf.handle()->data[0]);
+        if (!dma_buf_id) {
+            ALOGE("Failed to get dmabuf id");
+            onError();
+            return;
+        }
+
+        std::optional<V4L2WritableBufferRef> inputBuffer;
+        size_t targetIndex = 0;
+
+        // If there's an existing input buffer for this dma buffer, use it.
+        for (; targetIndex < mNextInputBufferId; targetIndex++) {
+            if (mLastDmaBufferId[targetIndex] == dma_buf_id) {
+                break;
+            }
+        }
+
+        if (targetIndex < kNumInputBuffers) {
+            // If we didn't find a buffer and there is an unused buffer, use that one.
+            if (targetIndex == mNextInputBufferId) {
+                mNextInputBufferId++;
+            }
+
+            inputBuffer = mInputQueue->getFreeBuffer(targetIndex);
+        }
+
+        // If we didn't find a reusable/unused input buffer, clobber a free one.
+        if (!inputBuffer) {
+            inputBuffer = mInputQueue->getFreeBuffer();
+        }
+
         // Pause if no free input buffer. We resume decoding after dequeueing input buffers.
-        auto inputBuffer = mInputQueue->getFreeBuffer();
         if (!inputBuffer) {
             ALOGV("There is no free input buffer.");
             return;
         }
+
+        mLastDmaBufferId[inputBuffer->bufferId()] = *dma_buf_id;
 
         auto request = std::move(mDecodeRequests.front());
         mDecodeRequests.pop();

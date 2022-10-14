@@ -21,6 +21,7 @@
 #include <v4l2_codec2/components/VideoDecoder.h>
 #include <v4l2_codec2/components/VideoFrame.h>
 #include <v4l2_codec2/components/VideoFramePool.h>
+#include <v4l2_codec2/plugin_store/DmabufHelpers.h>
 
 namespace android {
 
@@ -37,6 +38,8 @@ public:
     void flush() override;
 
 private:
+    static constexpr size_t kNumInputBuffers = 16;
+
     enum class State {
         Idle,  // Not received any decode buffer after initialized, flushed, or drained.
         Decoding,
@@ -88,6 +91,14 @@ private:
 
     std::queue<DecodeRequest> mDecodeRequests;
     std::map<int32_t, DecodeCB> mPendingDecodeCbs;
+
+    // Tracks the last DMA buffer ID which was used for a given V4L2 input
+    // buffer ID. Used to try to avoid re-importing buffers.
+    unique_id_t mLastDmaBufferId[kNumInputBuffers];
+
+    // The next input buffer ID to allocate. Note that since we don't un-allocate
+    // ids, all entries less than this in mLastDmaBufferId are valid.
+    size_t mNextInputBufferId = 0;
 
     size_t mMinNumOutputBuffers = 0;
     GetPoolCB mGetPoolCb;
