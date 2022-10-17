@@ -66,6 +66,9 @@ private:
     // buffer can be released by the component; only used for H264 because H264 may reorder the
     // output frames.
     std::shared_ptr<C2PortDelayTuning::output> mOutputDelay;
+    // The number of extra frames processed at one time by the component. Allows more input
+    // buffers to be simultaneously enqueued.
+    std::shared_ptr<C2PipelineDelayTuning> mPipelineDelay;
     // The input codec profile and level. For now configuring this parameter is useless since
     // the component always uses fixed codec profile to initialize accelerator. It is only used
     // for the client to query supported profile and level values.

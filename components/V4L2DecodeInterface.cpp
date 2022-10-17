@@ -232,6 +232,17 @@ V4L2DecodeInterface::V4L2DecodeInterface(const std::string& name,
                     .withConstValue(new C2PortDelayTuning::output(getOutputDelay(*mVideoCodec)))
                     .build());
 
+    // This value is set according to the relation between kNumInputBuffers = 16 and the current
+    // codec2 framework implementation. Specifically, this generally limits the framework to using
+    // <= 16 input buffers, although certain timing of events can result in a few more input buffers
+    // being allocated but rarely used. This lets us avoid remapping v4l2 input buffers and DMA
+    // buffers in the common case. We could go up to 4 here, to limit the framework to
+    // simultaneously enqueuing 16 input buffers, but there doesn't seem to be much of an a
+    // performance improvement from that.
+    addParameter(DefineParam(mPipelineDelay, C2_PARAMKEY_PIPELINE_DELAY)
+                         .withConstValue(new C2PipelineDelayTuning(3))
+                         .build());
+
     addParameter(DefineParam(mInputMediaType, C2_PARAMKEY_INPUT_MEDIA_TYPE)
                          .withConstValue(AllocSharedString<C2PortMediaTypeSetting::input>(
                                  inputMime.c_str()))
