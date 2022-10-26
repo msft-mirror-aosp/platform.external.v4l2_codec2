@@ -1980,12 +1980,14 @@ V4L2Device::SupportedEncodeProfiles V4L2Device::enumerateSupportedEncodeProfiles
     return profiles;
 }
 
-bool V4L2Device::startPolling(android::V4L2DevicePoller::EventCallback eventCallback,
+bool V4L2Device::startPolling(scoped_refptr<base::SequencedTaskRunner> taskRunner,
+                              android::V4L2DevicePoller::EventCallback eventCallback,
                               base::RepeatingClosure errorCallback) {
     DCHECK_CALLED_ON_VALID_SEQUENCE(mClientSequenceChecker);
 
     if (!mDevicePoller) {
-        mDevicePoller = std::make_unique<android::V4L2DevicePoller>(this, "V4L2DeviceThreadPoller");
+        mDevicePoller = std::make_unique<android::V4L2DevicePoller>(this, "V4L2DeviceThreadPoller",
+                                                                    std::move(taskRunner));
     }
 
     bool ret = mDevicePoller->startPolling(std::move(eventCallback), std::move(errorCallback));

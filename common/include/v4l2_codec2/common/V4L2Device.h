@@ -447,7 +447,8 @@ public:
     // a buffer is ready to be dequeued and/or a V4L2 event has been posted. |errorCallback| will
     // be posted to the client's
     // sequence if a polling error has occurred.
-    bool startPolling(android::V4L2DevicePoller::EventCallback eventCallback,
+    bool startPolling(scoped_refptr<base::SequencedTaskRunner> taskRunner,
+                      android::V4L2DevicePoller::EventCallback eventCallback,
                       base::RepeatingClosure errorCallback);
     // Stop polling this V4L2Device if polling was active. No new events will be posted after this
     // method has returned.

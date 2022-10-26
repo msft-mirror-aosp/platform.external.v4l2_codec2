@@ -36,7 +36,8 @@ public:
 
     // Create a poller for |device|, using a thread named |threadName|. Notification won't start
     // until |startPolling()| is called.
-    V4L2DevicePoller(V4L2Device* const device, const std::string& threadName);
+    V4L2DevicePoller(V4L2Device* const device, const std::string& threadName,
+                     scoped_refptr<base::SequencedTaskRunner> taskRunner);
     ~V4L2DevicePoller();
 
     // Starts polling. |mEventCallback| will be posted on the caller's sequence every time an event

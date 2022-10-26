@@ -689,7 +689,8 @@ bool V4L2Encoder::startDevicePoll() {
     ALOGV("%s()", __func__);
     ALOG_ASSERT(mTaskRunner->RunsTasksInCurrentSequence());
 
-    if (!mDevice->startPolling(::base::BindRepeating(&V4L2Encoder::serviceDeviceTask, mWeakThis),
+    if (!mDevice->startPolling(mTaskRunner,
+                               ::base::BindRepeating(&V4L2Encoder::serviceDeviceTask, mWeakThis),
                                ::base::BindRepeating(&V4L2Encoder::onPollError, mWeakThis))) {
         ALOGE("Device poll thread failed to start");
         onError();
