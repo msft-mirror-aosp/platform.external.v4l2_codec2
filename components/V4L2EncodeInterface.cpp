@@ -68,14 +68,15 @@ bool IsValidProfileForCodec(VideoCodec codec, C2Config::profile_t profile) {
 
 }  // namespace
 
+//static
+C2Config::level_t V4L2EncodeInterface::lowestConfigLevel = C2Config::LEVEL_UNUSED;
+
 // static
 C2R V4L2EncodeInterface::H264ProfileLevelSetter(
         bool /*mayBlock*/, C2P<C2StreamProfileLevelInfo::output>& info,
         const C2P<C2StreamPictureSizeInfo::input>& videoSize,
         const C2P<C2StreamFrameRateInfo::output>& frameRate,
         const C2P<C2StreamBitrateInfo::output>& bitrate) {
-    static C2Config::level_t lowestConfigLevel = C2Config::LEVEL_UNUSED;
-
     // Adopt default minimal profile instead if the requested profile is not supported, or lower
     // than the default minimal one.
     constexpr C2Config::profile_t minProfile = C2Config::PROFILE_AVC_BASELINE;

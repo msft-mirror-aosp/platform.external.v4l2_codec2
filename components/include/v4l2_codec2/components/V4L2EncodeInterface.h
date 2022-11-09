@@ -70,6 +70,10 @@ protected:
     static C2R IntraRefreshPeriodSetter(bool mayBlock,
                                         C2P<C2StreamIntraRefreshTuning::output>& period);
 
+    // Recorded lowest configured level
+    // Is static for the need to use H264ProfileLevelSetter as a setter
+    static C2Config::level_t lowestConfigLevel;
+
     // Constant parameters
 
     // The kind of the component; should be C2Component::KIND_ENCODER.
