@@ -73,6 +73,15 @@ private:
                const size_t minNumOutputBuffers, GetPoolCB getPoolCb, OutputCB outputCb,
                ErrorCB errorCb);
     bool setupInputFormat(const uint32_t inputPixelFormat, const size_t inputBufferSize);
+
+    // Sets minimal resolution and allocates minimal amount of output buffers for
+    // drain done signaling.
+    bool setupInitialOutput();
+    // Find the first output format and sets output to its minimal resolution.
+    bool setupMinimalOutputFormat();
+    // Allocates the at least |minOutputBuffersCount| of output buffers using set format
+    bool startOutputQueue(size_t minOutputBuffersCount, enum v4l2_memory memory);
+
     void pumpDecodeRequest();
 
     void serviceDeviceTask(bool event);

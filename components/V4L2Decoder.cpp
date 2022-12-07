@@ -148,6 +148,10 @@ bool V4L2Decoder::start(const VideoCodec& codec, const size_t inputBufferSize,
         ALOGE("Failed to setup input format.");
         return false;
     }
+    if (!setupInitialOutput()) {
+        ALOGE("Unable to setup initial output");
+        return false;
+    }
 
     if (!mDevice->startPolling(mTaskRunner,
                                ::base::BindRepeating(&V4L2Decoder::serviceDeviceTask, mWeakThis),
@@ -189,6 +193,116 @@ bool V4L2Decoder::setupInputFormat(const uint32_t inputPixelFormat, const size_t
         ALOGE("Failed to streamon input queue.");
         return false;
     }
+    return true;
+}
+
+bool V4L2Decoder::setupInitialOutput() {
+    ATRACE_CALL();
+    ALOGV("%s()", __func__);
+    ALOG_ASSERT(mTaskRunner->RunsTasksInCurrentSequence());
+
+    if (!setupMinimalOutputFormat()) {
+        ALOGE("Failed to set minimal resolution for initial output buffers");
+        return false;
+    }
+
+    if (!startOutputQueue(1, V4L2_MEMORY_MMAP)) {
+        ALOGE("Failed to start initialy output queue");
+        return false;
+    }
+
+    std::optional<V4L2WritableBufferRef> eosBuffer = mOutputQueue->getFreeBuffer();
+    if (!eosBuffer) {
+        ALOGE("Failed to acquire initial EOS buffer");
+        return false;
+    }
+
+    if (!std::move(*eosBuffer).queueMMap()) {
+        ALOGE("Failed to queue initial EOS buffer");
+        return false;
+    }
+
+    return true;
+}
+
+bool V4L2Decoder::setupMinimalOutputFormat() {
+    ui::Size minResolution, maxResolution;
+
+    for (const uint32_t& pixfmt :
+         mDevice->enumerateSupportedPixelformats(V4L2_BUF_TYPE_VIDEO_CAPTURE_MPLANE)) {
+        if (std::find(kSupportedOutputFourccs.begin(), kSupportedOutputFourccs.end(), pixfmt) ==
+            kSupportedOutputFourccs.end()) {
+            ALOGD("Pixel format %s is not supported, skipping...", fourccToString(pixfmt).c_str());
+            continue;
+        }
+
+        mDevice->getSupportedResolution(pixfmt, &minResolution, &maxResolution);
+        if (minResolution.isEmpty()) {
+            minResolution.set(128, 128);
+        }
+
+        if (mOutputQueue->setFormat(pixfmt, minResolution, 0) != std::nullopt) {
+            return true;
+        }
+    }
+
+    ALOGE("Failed to find supported pixel format");
+    return false;
+}
+
+bool V4L2Decoder::startOutputQueue(size_t minOutputBuffersCount, enum v4l2_memory memory) {
+    ALOGV("%s()", __func__);
+    ALOG_ASSERT(mTaskRunner->RunsTasksInCurrentSequence());
+
+    const std::optional<struct v4l2_format> format = getFormatInfo();
+    std::optional<size_t> numOutputBuffers = getNumOutputBuffers();
+    if (!format || !numOutputBuffers) {
+        return false;
+    }
+    *numOutputBuffers = std::max(*numOutputBuffers, minOutputBuffersCount);
+
+    const ui::Size codedSize(format->fmt.pix_mp.width, format->fmt.pix_mp.height);
+    if (!setupOutputFormat(codedSize)) {
+        return false;
+    }
+
+    const std::optional<struct v4l2_format> adjustedFormat = getFormatInfo();
+    if (!adjustedFormat) {
+        return false;
+    }
+    mCodedSize.set(adjustedFormat->fmt.pix_mp.width, adjustedFormat->fmt.pix_mp.height);
+    mVisibleRect = getVisibleRect(mCodedSize);
+
+    ALOGI("Need %zu output buffers. coded size: %s, visible rect: %s", *numOutputBuffers,
+          toString(mCodedSize).c_str(), toString(mVisibleRect).c_str());
+    if (isEmpty(mCodedSize)) {
+        ALOGE("Failed to get resolution from V4L2 driver.");
+        return false;
+    }
+
+    if (mOutputQueue->isStreaming()) {
+        mOutputQueue->streamoff();
+    }
+    if (mOutputQueue->allocatedBuffersCount() > 0) {
+        mOutputQueue->deallocateBuffers();
+    }
+
+    mFrameAtDevice.clear();
+    mBlockIdToV4L2Id.clear();
+
+    const size_t adjustedNumOutputBuffers =
+            mOutputQueue->allocateBuffers(*numOutputBuffers, memory);
+    if (adjustedNumOutputBuffers == 0) {
+        ALOGE("Failed to allocate output buffer.");
+        return false;
+    }
+
+    ALOGV("Allocated %zu output buffers.", adjustedNumOutputBuffers);
+    if (!mOutputQueue->streamon()) {
+        ALOGE("Failed to streamon output queue.");
+        return false;
+    }
+
     return true;
 }
 
@@ -548,46 +662,8 @@ bool V4L2Decoder::changeResolution() {
     ALOGV("%s()", __func__);
     ALOG_ASSERT(mTaskRunner->RunsTasksInCurrentSequence());
 
-    const std::optional<struct v4l2_format> format = getFormatInfo();
-    std::optional<size_t> numOutputBuffers = getNumOutputBuffers();
-    if (!format || !numOutputBuffers) {
-        return false;
-    }
-    *numOutputBuffers = std::max(*numOutputBuffers, mMinNumOutputBuffers);
-
-    const ui::Size codedSize(format->fmt.pix_mp.width, format->fmt.pix_mp.height);
-    if (!setupOutputFormat(codedSize)) {
-        return false;
-    }
-
-    const std::optional<struct v4l2_format> adjustedFormat = getFormatInfo();
-    if (!adjustedFormat) {
-        return false;
-    }
-    mCodedSize.set(adjustedFormat->fmt.pix_mp.width, adjustedFormat->fmt.pix_mp.height);
-    mVisibleRect = getVisibleRect(mCodedSize);
-
-    ALOGI("Need %zu output buffers. coded size: %s, visible rect: %s", *numOutputBuffers,
-          toString(mCodedSize).c_str(), toString(mVisibleRect).c_str());
-    if (isEmpty(mCodedSize)) {
-        ALOGE("Failed to get resolution from V4L2 driver.");
-        return false;
-    }
-
-    mOutputQueue->streamoff();
-    mOutputQueue->deallocateBuffers();
-    mFrameAtDevice.clear();
-    mBlockIdToV4L2Id.clear();
-
-    const size_t adjustedNumOutputBuffers =
-            mOutputQueue->allocateBuffers(*numOutputBuffers, V4L2_MEMORY_DMABUF);
-    if (adjustedNumOutputBuffers == 0) {
-        ALOGE("Failed to allocate output buffer.");
-        return false;
-    }
-    ALOGV("Allocated %zu output buffers.", adjustedNumOutputBuffers);
-    if (!mOutputQueue->streamon()) {
-        ALOGE("Failed to streamon output queue.");
+    if (!startOutputQueue(mMinNumOutputBuffers, V4L2_MEMORY_DMABUF)) {
+        ALOGE("Failed to start output queue during DRC.");
         return false;
     }
 
@@ -603,8 +679,8 @@ bool V4L2Decoder::changeResolution() {
     // exists at the same time.
     mVideoFramePool.reset();
     // Always use flexible pixel 420 format YCBCR_420_888 in Android.
-    mVideoFramePool =
-            mGetPoolCb.Run(mCodedSize, HalPixelFormat::YCBCR_420_888, adjustedNumOutputBuffers);
+    mVideoFramePool = mGetPoolCb.Run(mCodedSize, HalPixelFormat::YCBCR_420_888,
+                                     mOutputQueue->allocatedBuffersCount());
     if (!mVideoFramePool) {
         ALOGE("Failed to get block pool with size: %s", toString(mCodedSize).c_str());
         return false;
