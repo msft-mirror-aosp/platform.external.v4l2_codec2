@@ -652,7 +652,7 @@ void V4L2Decoder::serviceDeviceTask(bool event) {
                               ::base::BindOnce(&V4L2Decoder::pumpDecodeRequest, mWeakThis));
     }
     // We free some output buffers, try to get VideoFrame.
-    if (outputDequeued) {
+    if (outputDequeued && mState == State::Decoding) {
         mTaskRunner->PostTask(FROM_HERE,
                               ::base::BindOnce(&V4L2Decoder::tryFetchVideoFrame, mWeakThis));
     }
@@ -758,7 +758,9 @@ void V4L2Decoder::onVideoFrameReady(
 
     if (!frameWithBlockId) {
         ALOGE("Got nullptr VideoFrame.");
-        onError();
+        if (mState == State::Decoding) {
+            onError();
+        }
         return;
     }
 
@@ -807,7 +809,9 @@ void V4L2Decoder::onVideoFrameReady(
     }
     mFrameAtDevice.insert(std::make_pair(v4l2Id, std::move(frame)));
 
-    tryFetchVideoFrame();
+    if (mState == State::Decoding) {
+        tryFetchVideoFrame();
+    }
 }
 
 std::optional<size_t> V4L2Decoder::getNumOutputBuffers() {
