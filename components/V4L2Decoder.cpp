@@ -31,19 +31,6 @@ constexpr size_t kNumExtraOutputBuffers = 4;
 
 }  // namespace
 
-uint32_t VideoCodecToV4L2PixFmt(VideoCodec codec) {
-    switch (codec) {
-    case VideoCodec::H264:
-        return V4L2_PIX_FMT_H264;
-    case VideoCodec::VP8:
-        return V4L2_PIX_FMT_VP8;
-    case VideoCodec::VP9:
-        return V4L2_PIX_FMT_VP9;
-    case VideoCodec::HEVC:
-        return V4L2_PIX_FMT_HEVC;
-    }
-}
-
 // static
 std::unique_ptr<VideoDecoder> V4L2Decoder::Create(
         uint32_t debugStreamId, const VideoCodec& codec, const size_t inputBufferSize,
@@ -112,7 +99,7 @@ bool V4L2Decoder::start(const VideoCodec& codec, const size_t inputBufferSize,
 
     mDevice = V4L2Device::create(mDebugStreamId);
 
-    const uint32_t inputPixelFormat = VideoCodecToV4L2PixFmt(codec);
+    const uint32_t inputPixelFormat = V4L2Device::videoCodecToPixFmt(codec);
     if (!mDevice->open(V4L2Device::Type::kDecoder, inputPixelFormat)) {
         ALOGE("Failed to open device for %s", VideoCodecToString(codec));
         return false;
@@ -123,10 +110,7 @@ bool V4L2Decoder::start(const VideoCodec& codec, const size_t inputBufferSize,
         return false;
     }
 
-    struct v4l2_decoder_cmd cmd;
-    memset(&cmd, 0, sizeof(cmd));
-    cmd.cmd = V4L2_DEC_CMD_STOP;
-    if (mDevice->ioctl(VIDIOC_TRY_DECODER_CMD, &cmd) != 0) {
+    if (!sendV4L2DecoderCmd(false)) {
         ALOGE("Device does not support flushing (V4L2_DEC_CMD_STOP)");
         return false;
     }

@@ -132,23 +132,16 @@ V4L2DecodeInterface::V4L2DecodeInterface(const std::string& name,
 
     std::string inputMime;
 
-    scoped_refptr<V4L2Device> device = V4L2Device::create();
-    if (!device) {
-        ALOGE("Failed to create V4L2 device");
-    }
-
     ui::Size maxSize(1, 1);
 
     std::vector<uint32_t> profiles;
-    if (device) {
-        V4L2Device::SupportedDecodeProfiles supportedProfiles =
-                device->getSupportedDecodeProfiles({VideoCodecToV4L2PixFmt(*mVideoCodec)});
-        for (const auto& supportedProfile : supportedProfiles) {
-            if (isValidProfileForCodec(mVideoCodec.value(), supportedProfile.profile)) {
-                profiles.push_back(static_cast<uint32_t>(supportedProfile.profile));
-                maxSize.setWidth(std::max(maxSize.width, supportedProfile.max_resolution.width));
-                maxSize.setHeight(std::max(maxSize.height, supportedProfile.max_resolution.height));
-            }
+    V4L2Device::SupportedProfiles supportedProfiles = V4L2Device::getSupportedProfiles(
+            V4L2Device::Type::kDecoder, {V4L2Device::videoCodecToPixFmt(*mVideoCodec)});
+    for (const auto& supportedProfile : supportedProfiles) {
+        if (isValidProfileForCodec(mVideoCodec.value(), supportedProfile.profile)) {
+            profiles.push_back(static_cast<uint32_t>(supportedProfile.profile));
+            maxSize.setWidth(std::max(maxSize.width, supportedProfile.max_resolution.width));
+            maxSize.setHeight(std::max(maxSize.height, supportedProfile.max_resolution.height));
         }
     }
 
@@ -177,18 +170,15 @@ V4L2DecodeInterface::V4L2DecodeInterface(const std::string& name,
         }
     }
 
-    uint32_t defaultProfile = C2Config::PROFILE_UNUSED;
-    if (device) defaultProfile = device->getDefaultProfile(*mVideoCodec);
+    uint32_t defaultProfile = V4L2Device::getDefaultProfile(*mVideoCodec);
     if (defaultProfile == C2Config::PROFILE_UNUSED)
         defaultProfile = *std::min_element(profiles.begin(), profiles.end());
 
     std::vector<unsigned int> levels;
-    if (device) {
-        std::vector<C2Config::level_t> supportedLevels =
-                device->getSupportedDecodeLevels(*mVideoCodec);
-        for (const auto& supportedLevel : supportedLevels) {
-            levels.push_back(static_cast<unsigned int>(supportedLevel));
-        }
+    std::vector<C2Config::level_t> supportedLevels =
+            V4L2Device::getSupportedDecodeLevels(*mVideoCodec);
+    for (const auto& supportedLevel : supportedLevels) {
+        levels.push_back(static_cast<unsigned int>(supportedLevel));
     }
 
     if (levels.empty()) {
@@ -222,8 +212,7 @@ V4L2DecodeInterface::V4L2DecodeInterface(const std::string& name,
         }
     }
 
-    uint32_t defaultLevel = C2Config::LEVEL_UNUSED;
-    if (device) defaultLevel = device->getDefaultLevel(*mVideoCodec);
+    uint32_t defaultLevel = V4L2Device::getDefaultLevel(*mVideoCodec);
     if (defaultLevel == C2Config::LEVEL_UNUSED)
         defaultLevel = *std::min_element(levels.begin(), levels.end());
 
