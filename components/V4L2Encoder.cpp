@@ -223,7 +223,7 @@ bool V4L2Encoder::initialize(C2Config::profile_t outputProfile, std::optional<ui
 
     // Open the V4L2 device for encoding to the requested output format.
     // TODO(dstaessens): Avoid conversion to VideoCodecProfile and use C2Config::profile_t directly.
-    uint32_t outputPixelFormat = V4L2Device::C2ProfileToV4L2PixFmt(outputProfile, false);
+    uint32_t outputPixelFormat = V4L2Device::c2ProfileToV4L2PixFmt(outputProfile, false);
     if (!outputPixelFormat) {
         ALOGE("Invalid output profile %s", profileToString(outputProfile));
         return false;
@@ -575,7 +575,7 @@ bool V4L2Encoder::configureOutputFormat(C2Config::profile_t outputProfile) {
     ALOG_ASSERT(!mOutputQueue->isStreaming());
     ALOG_ASSERT(!isEmpty(mVisibleSize));
 
-    auto format = mOutputQueue->setFormat(V4L2Device::C2ProfileToV4L2PixFmt(outputProfile, false),
+    auto format = mOutputQueue->setFormat(V4L2Device::c2ProfileToV4L2PixFmt(outputProfile, false),
                                           mVisibleSize, GetMaxOutputBufferSize(mVisibleSize));
     if (!format) {
         ALOGE("Failed to set output format to %s", profileToString(outputProfile));
@@ -675,7 +675,7 @@ bool V4L2Encoder::configureBitrateMode(C2Config::bitrate_mode_t bitrateMode) {
     ALOG_ASSERT(mTaskRunner->RunsTasksInCurrentSequence());
 
     v4l2_mpeg_video_bitrate_mode v4l2BitrateMode =
-            V4L2Device::C2BitrateModeToV4L2BitrateMode(bitrateMode);
+            V4L2Device::c2BitrateModeToV4L2BitrateMode(bitrateMode);
     if (!mDevice->setExtCtrls(V4L2_CTRL_CLASS_MPEG,
                               {V4L2ExtCtrl(V4L2_CID_MPEG_VIDEO_BITRATE_MODE, v4l2BitrateMode)})) {
         // TODO(b/190336806): Our stack doesn't support bitrate mode changes yet. We default to CBR

@@ -34,8 +34,6 @@ constexpr std::initializer_list<uint32_t> kSupportedOutputFourccs = {
         Fourcc::NV12, Fourcc::NV21, Fourcc::NM12, Fourcc::NM21,
 };
 
-uint32_t VideoCodecToV4L2PixFmt(VideoCodec codec);
-
 class V4L2Decoder : public VideoDecoder {
 public:
     static std::unique_ptr<VideoDecoder> Create(

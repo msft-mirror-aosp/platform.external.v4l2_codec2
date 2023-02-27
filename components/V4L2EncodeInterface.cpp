@@ -229,13 +229,6 @@ V4L2EncodeInterface::V4L2EncodeInterface(const C2String& name,
 }
 
 void V4L2EncodeInterface::Initialize(const C2String& name) {
-    scoped_refptr<V4L2Device> device = V4L2Device::create();
-    if (!device) {
-        ALOGE("Failed to create V4L2 device");
-        mInitStatus = C2_CORRUPTED;
-        return;
-    }
-
     auto codec = getCodecFromComponentName(name);
     if (!codec) {
         ALOGE("Invalid component name");
@@ -243,7 +236,8 @@ void V4L2EncodeInterface::Initialize(const C2String& name) {
         return;
     }
 
-    V4L2Device::SupportedEncodeProfiles supported_profiles = device->getSupportedEncodeProfiles();
+    auto supported_profiles = V4L2Device::getSupportedProfiles(
+            V4L2Device::Type::kEncoder, {V4L2Device::videoCodecToPixFmt(codec.value())});
 
     // Compile the list of supported profiles.
     // Note: unsigned int is used here, since std::vector<C2Config::profile_t> cannot convert to
