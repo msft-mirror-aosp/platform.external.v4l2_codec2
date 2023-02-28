@@ -538,6 +538,27 @@ void V4L2EncodeComponent::queueTask(std::unique_ptr<C2Work> work) {
                 reportError(status);
                 return;
             }
+        } else {
+            // Android encoder framework reuses the same gpu buffers as
+            // inputs and doesn't call lock/unlock explicitly between writes.
+            // If there is format conversion, this is fine since we will
+            // read back what we've written first and then put it in another
+            // buffer. Whenever there is no format conversion, this causes
+            // sync issue on ARCVM since host side buffers never get updated.
+            // Fix this by explicitly calling lock/unlock before sending buffer
+            // to encoder.
+            const C2Handle* handle = inputBlock.handle();
+            uint32_t width, height, format, stride, generation, igbpSlot;
+            uint64_t usage, igbpId;
+            _UnwrapNativeCodec2GrallocMetadata(handle, &width, &height, &format, &usage, &stride,
+                                               &generation, &igbpId, &igbpSlot);
+            native_handle_t* gralloc_handle = UnwrapNativeCodec2GrallocHandle(handle);
+            sp<GraphicBuffer> buffer =
+                    new GraphicBuffer(gralloc_handle, GraphicBuffer::CLONE_HANDLE, width, height,
+                                      format, 1, usage, stride);
+            void* pixels;
+            buffer->lock(GRALLOC_USAGE_SW_READ_OFTEN | GRALLOC_USAGE_SW_WRITE_OFTEN, &pixels);
+            buffer->unlock();
         }
         if (!encode(inputBlock, index, timestamp)) {
             return;
