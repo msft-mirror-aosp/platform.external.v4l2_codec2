@@ -394,6 +394,18 @@ void V4L2Decoder::pumpDecodeRequest() {
             auto request = std::move(mDecodeRequests.front());
             mDecodeRequests.pop();
 
+            // There is one more case that EOS frame cannot be dequeued because
+            // the first resolution change event wasn't dequeued before - output
+            // queues on the host are not streaming but ARCVM has no knowledge about
+            // it. Check if first resolution change event was received and finish
+            // drain now if it wasn't.
+            if (mInitialEosBuffer) {
+                ALOGV("Terminate drain, because there was no stream");
+                mTaskRunner->PostTask(FROM_HERE, ::base::BindOnce(std::move(request.decodeCb),
+                                                                  VideoDecoder::DecodeStatus::kOk));
+                return;
+            }
+
             if (!sendV4L2DecoderCmd(false)) {
                 std::move(request.decodeCb).Run(VideoDecoder::DecodeStatus::kError);
                 onError();
