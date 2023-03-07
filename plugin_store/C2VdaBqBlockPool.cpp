@@ -918,6 +918,16 @@ c2_status_t C2VdaBqBlockPool::fetchGraphicBlock(
     return C2_NO_INIT;
 }
 
+c2_status_t C2VdaBqBlockPool::fetchGraphicBlock(uint32_t width, uint32_t height, uint32_t format,
+                                                C2MemoryUsage usage,
+                                                std::shared_ptr<C2GraphicBlock>* block,
+                                                C2Fence* fence) {
+    if (mImpl) {
+        return mImpl->fetchGraphicBlock(width, height, format, usage, block);
+    }
+    return C2_NO_INIT;
+}
+
 void C2VdaBqBlockPool::setRenderCallback(
         const C2BufferQueueBlockPool::OnRenderCallback& renderCallback) {
     if (mImpl) {
