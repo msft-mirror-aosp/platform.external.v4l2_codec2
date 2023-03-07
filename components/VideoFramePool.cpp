@@ -10,6 +10,9 @@
 #include <stdint.h>
 #include <memory>
 
+#include <C2BlockInternal.h>
+#include <bufferpool/BufferPoolTypes.h>
+
 #include <android/hardware/graphics/common/1.0/types.h>
 #include <base/bind.h>
 #include <base/memory/ptr_util.h>
@@ -17,11 +20,11 @@
 #include <log/log.h>
 
 #include <v4l2_codec2/common/VideoTypes.h>
-#include <v4l2_codec2/plugin_store/C2VdaPooledBlockPool.h>
 #include <v4l2_codec2/plugin_store/DmabufHelpers.h>
 #include <v4l2_codec2/plugin_store/V4L2AllocatorId.h>
 
 using android::hardware::graphics::common::V1_0::BufferUsage;
+using android::hardware::media::bufferpool::BufferPoolData;
 
 namespace android {
 
@@ -42,8 +45,20 @@ std::optional<uint32_t> VideoFramePool::getBufferIdFromGraphicBlock(C2BlockPool&
     }
     case V4L2AllocatorId::V4L2_BUFFERPOOL:
         FALLTHROUGH;
-    case V4L2AllocatorId::SECURE_LINEAR:
-        return C2VdaPooledBlockPool::getBufferIdFromGraphicBlock(block);
+    case V4L2AllocatorId::SECURE_LINEAR: {
+        std::shared_ptr<_C2BlockPoolData> blockPoolData =
+                _C2BlockFactory::GetGraphicBlockPoolData(block);
+        if (blockPoolData->getType() != _C2BlockPoolData::TYPE_BUFFERPOOL) {
+            ALOGE("Obtained C2GraphicBlock is not bufferpool-backed.");
+            return std::nullopt;
+        }
+        std::shared_ptr<BufferPoolData> bpData;
+        if (!_C2BlockFactory::GetBufferPoolData(blockPoolData, &bpData) || !bpData) {
+            ALOGE("BufferPoolData unavailable in block.");
+            return std::nullopt;
+        }
+        return bpData->mId;
+    }
     }
 
     ALOGE("%s(): unknown allocator ID: %u", __func__, blockPool.getAllocatorId());
@@ -54,13 +69,6 @@ std::optional<uint32_t> VideoFramePool::getBufferIdFromGraphicBlock(C2BlockPool&
 c2_status_t VideoFramePool::requestNewBufferSet(C2BlockPool& blockPool, int32_t bufferCount,
                                                 const ui::Size& size, uint32_t format,
                                                 C2MemoryUsage usage) {
-    ALOGV("%s() blockPool.getAllocatorId() = %u", __func__, blockPool.getAllocatorId());
-
-    if (blockPool.getAllocatorId() == android::V4L2AllocatorId::V4L2_BUFFERPOOL) {
-        C2VdaPooledBlockPool* bpPool = static_cast<C2VdaPooledBlockPool*>(&blockPool);
-        return bpPool->requestNewBufferSet(bufferCount);
-    }
-
     ALOGE("%s(): unknown allocator ID: %u", __func__, blockPool.getAllocatorId());
     return C2_BAD_VALUE;
 }
