@@ -63,18 +63,8 @@ private:
     // Returns true if a buffer shall not be handed to client.
     bool shouldDropBuffer(uint32_t bufferId);
 
-    // Ask |blockPool| to allocate the specified number of buffers.
-    // |bufferCount| is the number of requested buffers.
-    static c2_status_t requestNewBufferSet(C2BlockPool& blockPool, int32_t bufferCount,
-                                           const ui::Size& size, uint32_t format,
-                                           C2MemoryUsage usage);
-
     static std::optional<uint32_t> getBufferIdFromGraphicBlock(C2BlockPool& blockPool,
                                                                const C2Block2D& block);
-
-    // Ask |blockPool| to notify when a block is available via |cb|.
-    // Return true if |blockPool| supports notifying buffer available.
-    static bool setNotifyBlockAvailableCb(C2BlockPool& blockPool, ::base::OnceClosure cb);
 
     std::shared_ptr<C2BlockPool> mBlockPool;
 

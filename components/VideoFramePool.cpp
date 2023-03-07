@@ -66,19 +66,6 @@ std::optional<uint32_t> VideoFramePool::getBufferIdFromGraphicBlock(C2BlockPool&
 }
 
 // static
-c2_status_t VideoFramePool::requestNewBufferSet(C2BlockPool& blockPool, int32_t bufferCount,
-                                                const ui::Size& size, uint32_t format,
-                                                C2MemoryUsage usage) {
-    ALOGE("%s(): unknown allocator ID: %u", __func__, blockPool.getAllocatorId());
-    return C2_BAD_VALUE;
-}
-
-// static
-bool VideoFramePool::setNotifyBlockAvailableCb(C2BlockPool& blockPool, ::base::OnceClosure cb) {
-    return false;
-}
-
-// static
 std::unique_ptr<VideoFramePool> VideoFramePool::Create(
         std::shared_ptr<C2BlockPool> blockPool, const size_t numBuffers, const ui::Size& size,
         HalPixelFormat pixelFormat, bool isSecure,
@@ -93,11 +80,6 @@ std::unique_ptr<VideoFramePool> VideoFramePool::Create(
         usage |= C2MemoryUsage::CPU_READ;
     }
     const C2MemoryUsage memoryUsage(usage);
-
-    if (requestNewBufferSet(*blockPool, numBuffers, size, static_cast<uint32_t>(pixelFormat),
-                            memoryUsage) != C2_OK) {
-        return nullptr;
-    }
 
     std::unique_ptr<VideoFramePool> pool =
             ::base::WrapUnique(new VideoFramePool(std::move(blockPool), numBuffers, size,
