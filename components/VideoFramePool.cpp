@@ -176,28 +176,41 @@ void VideoFramePool::getVideoFrameTask() {
     // Variables used to exponential backoff retry when buffer fetching times out.
     constexpr size_t kFetchRetryDelayInit = 64;    // Initial delay: 64us
     constexpr size_t kFetchRetryDelayMax = 16384;  // Max delay: 16ms (1 frame at 60fps)
+    constexpr size_t kFenceWaitTimeoutNs = 16000000;  // 16ms (1 frame at 60fps)
     static size_t sNumRetries = 0;
     static size_t sDelay = kFetchRetryDelayInit;
 
+    C2Fence fence;
     std::shared_ptr<C2GraphicBlock> block;
-    c2_status_t err = mBlockPool->fetchGraphicBlock(
-            mSize.width, mSize.height, static_cast<uint32_t>(mPixelFormat), mMemoryUsage, &block);
-    if (err == C2_TIMED_OUT || err == C2_BLOCKING) {
-        if (setNotifyBlockAvailableCb(*mBlockPool,
-                                      ::base::BindOnce(&VideoFramePool::getVideoFrameTaskThunk,
-                                                       mFetchTaskRunner, mFetchWeakThis))) {
-            ALOGV("%s(): fetchGraphicBlock() timeout, waiting for block available.", __func__);
-        } else {
-            ALOGV("%s(): fetchGraphicBlock() timeout, waiting %zuus (%zu retry)", __func__, sDelay,
-                  sNumRetries + 1);
-            mFetchTaskRunner->PostDelayedTask(
-                    FROM_HERE, ::base::BindOnce(&VideoFramePool::getVideoFrameTask, mFetchWeakThis),
-                    ::base::TimeDelta::FromMicroseconds(sDelay));
-
-            sDelay = std::min(sDelay * 2, kFetchRetryDelayMax);  // Exponential backoff
-            sNumRetries++;
+    c2_status_t err = mBlockPool->fetchGraphicBlock(mSize.width, mSize.height,
+                                                    static_cast<uint32_t>(mPixelFormat),
+                                                    mMemoryUsage, &block, &fence);
+    if (err == C2_BLOCKING) {
+        err = fence.wait(kFenceWaitTimeoutNs);
+        if (err == C2_OK) {
+            ALOGV("%s(): fence wait succeded, retrying now", __func__);
+            mFetchTaskRunner->PostTask(
+                    FROM_HERE,
+                    ::base::BindOnce(&VideoFramePool::getVideoFrameTask, mFetchWeakThis));
+            return;
         }
+        ALOGV("%s(): fence wait unsucessful err=%d", __func__, err);
+    } else if (err == C2_OMITTED) {
+        // Fenced version is not supported, try legacy version.
+        err = mBlockPool->fetchGraphicBlock(mSize.width, mSize.height,
+                                            static_cast<uint32_t>(mPixelFormat), mMemoryUsage,
+                                            &block);
+    }
 
+    if (err == C2_TIMED_OUT || err == C2_BLOCKING) {
+        ALOGV("%s(): fetchGraphicBlock() timeout, waiting %zuus (%zu retry)", __func__, sDelay,
+              sNumRetries + 1);
+        mFetchTaskRunner->PostDelayedTask(
+                FROM_HERE, ::base::BindOnce(&VideoFramePool::getVideoFrameTask, mFetchWeakThis),
+                ::base::TimeDelta::FromMicroseconds(sDelay));
+
+        sDelay = std::min(sDelay * 2, kFetchRetryDelayMax);  // Exponential backoff
+        sNumRetries++;
         return;
     }
 
@@ -205,20 +218,28 @@ void VideoFramePool::getVideoFrameTask() {
     sNumRetries = 0;
     sDelay = kFetchRetryDelayInit;
 
+    if (err != C2_OK) {
+        ALOGE("%s(): Failed to fetch block, err=%d", __func__, err);
+        return;
+    }
+
+    ALOG_ASSERT(block != nullptr);
+    std::unique_ptr<VideoFrame> frame = VideoFrame::Create(std::move(block));
     std::optional<FrameWithBlockId> frameWithBlockId;
-    if (err == C2_OK) {
-        ALOG_ASSERT(block != nullptr);
-        std::optional<uint32_t> bufferId = getBufferIdFromGraphicBlock(*mBlockPool, *block);
-        std::unique_ptr<VideoFrame> frame = VideoFrame::Create(std::move(block));
+    std::optional<uint32_t> bufferId;
+
+    if (bufferId && frame) {
+        bufferId = getBufferIdFromGraphicBlock(*mBlockPool, *block);
+
+        if (bufferId) {
+            ALOGV("%s(): Got buffer with id = %u", __func__, *bufferId);
+        }
+
         // Only pass the frame + id pair if both have successfully been obtained.
         // Otherwise exit the loop so a nullopt is passed to the client.
-        if (bufferId && frame) {
-            frameWithBlockId = std::make_pair(std::move(frame), *bufferId);
-        } else {
-            ALOGE("%s(): Failed to generate VideoFrame or get the buffer id.", __func__);
-        }
+        frameWithBlockId = std::make_pair(std::move(frame), *bufferId);
     } else {
-        ALOGE("%s(): Failed to fetch block, err=%d", __func__, err);
+        ALOGE("%s(): Failed to generate VideoFrame or get the buffer id.", __func__);
     }
 
     mClientTaskRunner->PostTask(
