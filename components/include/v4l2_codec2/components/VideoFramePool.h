@@ -44,12 +44,13 @@ public:
 
 private:
     // |blockPool| is the C2BlockPool that we fetch graphic blocks from.
+    // |maxBufferCount| maximum number of buffer that should should provide to client
     // |size| is the resolution size of the required graphic blocks.
     // |pixelFormat| is the pixel format of the required graphic blocks.
     // |isSecure| indicates the video stream is encrypted or not.
     // All public methods and the callbacks should be run on |taskRunner|.
-    VideoFramePool(std::shared_ptr<C2BlockPool> blockPool, const ui::Size& size,
-                   HalPixelFormat pixelFormat, C2MemoryUsage memoryUsage,
+    VideoFramePool(std::shared_ptr<C2BlockPool> blockPool, const size_t maxBufferCount,
+                   const ui::Size& size, HalPixelFormat pixelFormat, C2MemoryUsage memoryUsage,
                    scoped_refptr<::base::SequencedTaskRunner> taskRunner);
     bool initialize();
     void destroyTask();
@@ -58,6 +59,9 @@ private:
                                        std::optional<::base::WeakPtr<VideoFramePool>> weakPool);
     void getVideoFrameTask();
     void onVideoFrameReady(std::optional<FrameWithBlockId> frameWithBlockId);
+
+    // Returns true if a buffer shall not be handed to client.
+    bool shouldDropBuffer(uint32_t bufferId);
 
     // Ask |blockPool| to allocate the specified number of buffers.
     // |bufferCount| is the number of requested buffers.
@@ -73,6 +77,13 @@ private:
     static bool setNotifyBlockAvailableCb(C2BlockPool& blockPool, ::base::OnceClosure cb);
 
     std::shared_ptr<C2BlockPool> mBlockPool;
+
+    // Holds the number of maximum amount of buffers that VideoFramePool
+    // should provide to client.
+    size_t mMaxBufferCount;
+    // Contains known buffer ids that are valid for the pool.
+    std::set<uint32_t> mBuffers;
+
     const ui::Size mSize;
     const HalPixelFormat mPixelFormat;
     const C2MemoryUsage mMemoryUsage;
