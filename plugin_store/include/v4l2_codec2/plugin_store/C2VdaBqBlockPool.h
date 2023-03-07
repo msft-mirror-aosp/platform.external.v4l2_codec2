@@ -55,6 +55,10 @@ public:
                                   C2MemoryUsage usage,
                                   std::shared_ptr<C2GraphicBlock>* block /* nonnull */) override;
 
+    c2_status_t fetchGraphicBlock(uint32_t width, uint32_t height, uint32_t format,
+                                  C2MemoryUsage usage, std::shared_ptr<C2GraphicBlock>* block,
+                                  C2Fence* fence) override;
+
     void setRenderCallback(const C2BufferQueueBlockPool::OnRenderCallback& renderCallback =
                                    C2BufferQueueBlockPool::OnRenderCallback()) override;
     void configureProducer(const android::sp<HGraphicBufferProducer>& producer) override;

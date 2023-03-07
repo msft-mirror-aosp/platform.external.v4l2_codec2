@@ -8,7 +8,7 @@ package {
 }
 
 cc_binary {
-    name: "android.hardware.media.c2@1.0-service-v4l2",
+    name: "android.hardware.media.c2@1.2-service-v4l2",
 
     defaults: [
         "hidl_defaults",
@@ -37,11 +37,11 @@ cc_binary {
     multilib: {
         lib32: {
             suffix: "-32",
-            init_rc: ["android.hardware.media.c2@1.0-service-v4l2-32.rc"],
+            init_rc: ["android.hardware.media.c2@1.2-service-v4l2-32.rc"],
         },
         lib64: {
             suffix: "-64",
-            init_rc: ["android.hardware.media.c2@1.0-service-v4l2-64.rc"],
+            init_rc: ["android.hardware.media.c2@1.2-service-v4l2-64.rc"],
         },
     },
 }
