@@ -12,10 +12,10 @@
 #include <mutex>
 
 #include <C2AllocatorGralloc.h>
+#include <C2BqBufferPriv.h>
 #include <C2BufferPriv.h>
 #include <log/log.h>
 
-#include <v4l2_codec2/plugin_store/C2VdaBqBlockPool.h>
 #include <v4l2_codec2/plugin_store/C2VdaPooledBlockPool.h>
 #include <v4l2_codec2/plugin_store/V4L2AllocatorId.h>
 #include <v4l2_codec2/plugin_store/VendorAllocatorLoader.h>
@@ -70,14 +70,11 @@ C2BlockPool* createBlockPool(C2Allocator::id_t allocatorId, C2BlockPool::local_i
     case V4L2AllocatorId::V4L2_BUFFERPOOL:
         return new C2VdaPooledBlockPool(allocator, poolId);
 
-    case V4L2AllocatorId::V4L2_BUFFERQUEUE:
-        return new C2VdaBqBlockPool(allocator, poolId);
-
     case V4L2AllocatorId::SECURE_LINEAR:
         return new C2PooledBlockPool(allocator, poolId);
 
     case V4L2AllocatorId::SECURE_GRAPHIC:
-        return new C2VdaBqBlockPool(allocator, poolId);
+        return new C2BufferQueueBlockPool(allocator, poolId);
 
     default:
         ALOGE("%s(): Unknown allocator id=%u", __func__, allocatorId);

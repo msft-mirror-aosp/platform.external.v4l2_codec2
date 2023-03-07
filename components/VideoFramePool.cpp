@@ -17,8 +17,8 @@
 #include <log/log.h>
 
 #include <v4l2_codec2/common/VideoTypes.h>
-#include <v4l2_codec2/plugin_store/C2VdaBqBlockPool.h>
 #include <v4l2_codec2/plugin_store/C2VdaPooledBlockPool.h>
+#include <v4l2_codec2/plugin_store/DmabufHelpers.h>
 #include <v4l2_codec2/plugin_store/V4L2AllocatorId.h>
 
 using android::hardware::graphics::common::V1_0::BufferUsage;
@@ -30,11 +30,20 @@ std::optional<uint32_t> VideoFramePool::getBufferIdFromGraphicBlock(C2BlockPool&
                                                                     const C2Block2D& block) {
     ALOGV("%s() blockPool.getAllocatorId() = %u", __func__, blockPool.getAllocatorId());
 
-    if (blockPool.getAllocatorId() == android::V4L2AllocatorId::V4L2_BUFFERPOOL) {
+    switch (blockPool.getAllocatorId()) {
+    case V4L2AllocatorId::SECURE_GRAPHIC:
+        FALLTHROUGH;
+    case C2PlatformAllocatorStore::BUFFERQUEUE: {
+        auto dmabufId = android::getDmabufId(block.handle()->data[0]);
+        if (!dmabufId) {
+            return std::nullopt;
+        }
+        return dmabufId.value();
+    }
+    case V4L2AllocatorId::V4L2_BUFFERPOOL:
+        FALLTHROUGH;
+    case V4L2AllocatorId::SECURE_LINEAR:
         return C2VdaPooledBlockPool::getBufferIdFromGraphicBlock(block);
-    } else if (blockPool.getAllocatorId() == C2PlatformAllocatorStore::BUFFERQUEUE) {
-        C2VdaBqBlockPool* bqPool = static_cast<C2VdaBqBlockPool*>(&blockPool);
-        return bqPool->getBufferIdFromGraphicBlock(block);
     }
 
     ALOGE("%s(): unknown allocator ID: %u", __func__, blockPool.getAllocatorId());
@@ -50,9 +59,6 @@ c2_status_t VideoFramePool::requestNewBufferSet(C2BlockPool& blockPool, int32_t 
     if (blockPool.getAllocatorId() == android::V4L2AllocatorId::V4L2_BUFFERPOOL) {
         C2VdaPooledBlockPool* bpPool = static_cast<C2VdaPooledBlockPool*>(&blockPool);
         return bpPool->requestNewBufferSet(bufferCount);
-    } else if (blockPool.getAllocatorId() == C2PlatformAllocatorStore::BUFFERQUEUE) {
-        C2VdaBqBlockPool* bqPool = static_cast<C2VdaBqBlockPool*>(&blockPool);
-        return bqPool->requestNewBufferSet(bufferCount, size.width, size.height, format, usage);
     }
 
     ALOGE("%s(): unknown allocator ID: %u", __func__, blockPool.getAllocatorId());
@@ -61,12 +67,6 @@ c2_status_t VideoFramePool::requestNewBufferSet(C2BlockPool& blockPool, int32_t 
 
 // static
 bool VideoFramePool::setNotifyBlockAvailableCb(C2BlockPool& blockPool, ::base::OnceClosure cb) {
-    ALOGV("%s() blockPool.getAllocatorId() = %u", __func__, blockPool.getAllocatorId());
-
-    if (blockPool.getAllocatorId() == C2PlatformAllocatorStore::BUFFERQUEUE) {
-        C2VdaBqBlockPool* bqPool = static_cast<C2VdaBqBlockPool*>(&blockPool);
-        return bqPool->setNotifyBlockAvailableCb(std::move(cb));
-    }
     return false;
 }
 
