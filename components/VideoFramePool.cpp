@@ -91,16 +91,19 @@ std::unique_ptr<VideoFramePool> VideoFramePool::Create(
         return nullptr;
     }
 
-    std::unique_ptr<VideoFramePool> pool = ::base::WrapUnique(new VideoFramePool(
-            std::move(blockPool), size, pixelFormat, memoryUsage, std::move(taskRunner)));
+    std::unique_ptr<VideoFramePool> pool =
+            ::base::WrapUnique(new VideoFramePool(std::move(blockPool), numBuffers, size,
+                                                  pixelFormat, memoryUsage, std::move(taskRunner)));
     if (!pool->initialize()) return nullptr;
     return pool;
 }
 
-VideoFramePool::VideoFramePool(std::shared_ptr<C2BlockPool> blockPool, const ui::Size& size,
-                               HalPixelFormat pixelFormat, C2MemoryUsage memoryUsage,
+VideoFramePool::VideoFramePool(std::shared_ptr<C2BlockPool> blockPool, const size_t maxBufferCount,
+                               const ui::Size& size, HalPixelFormat pixelFormat,
+                               C2MemoryUsage memoryUsage,
                                scoped_refptr<::base::SequencedTaskRunner> taskRunner)
       : mBlockPool(std::move(blockPool)),
+        mMaxBufferCount(maxBufferCount),
         mSize(size),
         mPixelFormat(pixelFormat),
         mMemoryUsage(memoryUsage),
@@ -142,6 +145,18 @@ void VideoFramePool::destroyTask() {
     ALOG_ASSERT(mFetchTaskRunner->RunsTasksInCurrentSequence());
 
     mFetchWeakThisFactory.InvalidateWeakPtrs();
+}
+
+bool VideoFramePool::shouldDropBuffer(uint32_t bufferId) {
+    if (mBuffers.size() < mMaxBufferCount) {
+        return false;
+    }
+
+    if (mBuffers.find(bufferId) != mBuffers.end()) {
+        return false;
+    }
+
+    return true;
 }
 
 bool VideoFramePool::getVideoFrame(GetVideoFrameCB cb) {
@@ -202,6 +217,23 @@ void VideoFramePool::getVideoFrameTask() {
                                             &block);
     }
 
+    std::optional<uint32_t> bufferId;
+    if (err == C2_OK) {
+        bufferId = getBufferIdFromGraphicBlock(*mBlockPool, *block);
+
+        if (bufferId) {
+            ALOGV("%s(): Got buffer with id = %u", __func__, *bufferId);
+
+            if (shouldDropBuffer(*bufferId)) {
+                // We drop buffer, since we got more then needed.
+                ALOGV("%s(): Dropping allocated buffer with id = %u", __func__, *bufferId);
+                bufferId = std::nullopt;
+                block.reset();
+                err = C2_TIMED_OUT;
+            }
+        }
+    }
+
     if (err == C2_TIMED_OUT || err == C2_BLOCKING) {
         ALOGV("%s(): fetchGraphicBlock() timeout, waiting %zuus (%zu retry)", __func__, sDelay,
               sNumRetries + 1);
@@ -226,18 +258,12 @@ void VideoFramePool::getVideoFrameTask() {
     ALOG_ASSERT(block != nullptr);
     std::unique_ptr<VideoFrame> frame = VideoFrame::Create(std::move(block));
     std::optional<FrameWithBlockId> frameWithBlockId;
-    std::optional<uint32_t> bufferId;
 
     if (bufferId && frame) {
-        bufferId = getBufferIdFromGraphicBlock(*mBlockPool, *block);
-
-        if (bufferId) {
-            ALOGV("%s(): Got buffer with id = %u", __func__, *bufferId);
-        }
-
         // Only pass the frame + id pair if both have successfully been obtained.
         // Otherwise exit the loop so a nullopt is passed to the client.
         frameWithBlockId = std::make_pair(std::move(frame), *bufferId);
+        mBuffers.insert(*bufferId);
     } else {
         ALOGE("%s(): Failed to generate VideoFrame or get the buffer id.", __func__);
     }
