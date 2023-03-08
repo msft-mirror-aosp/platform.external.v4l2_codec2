@@ -154,6 +154,7 @@ V4L2DecodeInterface::V4L2DecodeInterface(const std::string& name,
         case VideoCodec::H264:
             profiles = {
                     C2Config::PROFILE_AVC_BASELINE,
+                    C2Config::PROFILE_AVC_CONSTRAINED_BASELINE,
                     C2Config::PROFILE_AVC_MAIN,
                     C2Config::PROFILE_AVC_HIGH,
             };

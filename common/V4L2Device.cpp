@@ -1440,8 +1440,9 @@ C2Config::profile_t V4L2Device::v4L2ProfileToC2Profile(VideoCodec codec, uint32_
     case VideoCodec::H264:
         switch (profile) {
         case V4L2_MPEG_VIDEO_H264_PROFILE_BASELINE:
-        case V4L2_MPEG_VIDEO_H264_PROFILE_CONSTRAINED_BASELINE:
             return C2Config::PROFILE_AVC_BASELINE;
+        case V4L2_MPEG_VIDEO_H264_PROFILE_CONSTRAINED_BASELINE:
+            return C2Config::PROFILE_AVC_CONSTRAINED_BASELINE;
         case V4L2_MPEG_VIDEO_H264_PROFILE_MAIN:
             return C2Config::PROFILE_AVC_MAIN;
         case V4L2_MPEG_VIDEO_H264_PROFILE_EXTENDED:
@@ -1644,6 +1645,7 @@ std::vector<C2Config::profile_t> V4L2Device::queryC2Profiles(uint32_t pixFmt) {
                   "use default values, Base, Main, High");
             profiles = {
                     C2Config::PROFILE_AVC_BASELINE,
+                    C2Config::PROFILE_AVC_CONSTRAINED_BASELINE,
                     C2Config::PROFILE_AVC_MAIN,
                     C2Config::PROFILE_AVC_HIGH,
             };
@@ -1689,6 +1691,8 @@ int32_t V4L2Device::c2ProfileToV4L2H264Profile(C2Config::profile_t profile) {
     switch (profile) {
     case C2Config::PROFILE_AVC_BASELINE:
         return V4L2_MPEG_VIDEO_H264_PROFILE_BASELINE;
+    case C2Config::PROFILE_AVC_CONSTRAINED_BASELINE:
+        return V4L2_MPEG_VIDEO_H264_PROFILE_CONSTRAINED_BASELINE;
     case C2Config::PROFILE_AVC_MAIN:
         return V4L2_MPEG_VIDEO_H264_PROFILE_MAIN;
     case C2Config::PROFILE_AVC_EXTENDED:
