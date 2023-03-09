@@ -66,9 +66,6 @@ C2BlockPool* createBlockPool(C2Allocator::id_t allocatorId, C2BlockPool::local_i
     }
 
     switch (allocatorId) {
-    case V4L2AllocatorId::V4L2_BUFFERPOOL:
-        return new C2PooledBlockPool(allocator, poolId);
-
     case V4L2AllocatorId::SECURE_LINEAR:
         return new C2PooledBlockPool(allocator, poolId);
 
