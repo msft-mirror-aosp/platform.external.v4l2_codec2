@@ -394,24 +394,29 @@ V4L2DecodeInterface::V4L2DecodeInterface(const std::string& name,
                     .withSetter(DefaultColorAspectsSetter)
                     .build());
 
-    addParameter(
-            DefineParam(mColorAspects, C2_PARAMKEY_COLOR_ASPECTS)
-                    .withDefault(new C2StreamColorAspectsInfo::output(
-                            0u, C2Color::RANGE_UNSPECIFIED, C2Color::PRIMARIES_UNSPECIFIED,
-                            C2Color::TRANSFER_UNSPECIFIED, C2Color::MATRIX_UNSPECIFIED))
-                    .withFields(
-                            {C2F(mColorAspects, range)
-                                     .inRange(C2Color::RANGE_UNSPECIFIED, C2Color::RANGE_OTHER),
-                             C2F(mColorAspects, primaries)
-                                     .inRange(C2Color::PRIMARIES_UNSPECIFIED,
-                                              C2Color::PRIMARIES_OTHER),
-                             C2F(mColorAspects, transfer)
-                                     .inRange(C2Color::TRANSFER_UNSPECIFIED,
-                                              C2Color::TRANSFER_OTHER),
-                             C2F(mColorAspects, matrix)
-                                     .inRange(C2Color::MATRIX_UNSPECIFIED, C2Color::MATRIX_OTHER)})
-                    .withSetter(MergedColorAspectsSetter, mDefaultColorAspects, mCodedColorAspects)
-                    .build());
+    // At this moment v4l2_codec2 support decoding this information only for
+    // unprotected H264 and both protected and unprotected HEVC.
+    if ((mVideoCodec == VideoCodec::H264 && !secureMode) || mVideoCodec == VideoCodec::HEVC) {
+        addParameter(DefineParam(mColorAspects, C2_PARAMKEY_COLOR_ASPECTS)
+                             .withDefault(new C2StreamColorAspectsInfo::output(
+                                     0u, C2Color::RANGE_UNSPECIFIED, C2Color::PRIMARIES_UNSPECIFIED,
+                                     C2Color::TRANSFER_UNSPECIFIED, C2Color::MATRIX_UNSPECIFIED))
+                             .withFields({C2F(mColorAspects, range)
+                                                  .inRange(C2Color::RANGE_UNSPECIFIED,
+                                                           C2Color::RANGE_OTHER),
+                                          C2F(mColorAspects, primaries)
+                                                  .inRange(C2Color::PRIMARIES_UNSPECIFIED,
+                                                           C2Color::PRIMARIES_OTHER),
+                                          C2F(mColorAspects, transfer)
+                                                  .inRange(C2Color::TRANSFER_UNSPECIFIED,
+                                                           C2Color::TRANSFER_OTHER),
+                                          C2F(mColorAspects, matrix)
+                                                  .inRange(C2Color::MATRIX_UNSPECIFIED,
+                                                           C2Color::MATRIX_OTHER)})
+                             .withSetter(MergedColorAspectsSetter, mDefaultColorAspects,
+                                         mCodedColorAspects)
+                             .build());
+    }
 }
 
 size_t V4L2DecodeInterface::getInputBufferSize() const {
