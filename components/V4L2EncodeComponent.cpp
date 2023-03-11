@@ -531,13 +531,18 @@ void V4L2EncodeComponent::queueTask(std::unique_ptr<C2Work> work) {
             uint64_t usage, igbpId;
             _UnwrapNativeCodec2GrallocMetadata(handle, &width, &height, &format, &usage, &stride,
                                                &generation, &igbpId, &igbpSlot);
-            native_handle_t* gralloc_handle = UnwrapNativeCodec2GrallocHandle(handle);
-            sp<GraphicBuffer> buffer =
-                    new GraphicBuffer(gralloc_handle, GraphicBuffer::CLONE_HANDLE, width, height,
-                                      format, 1, usage, stride);
-            void* pixels;
-            buffer->lock(GRALLOC_USAGE_SW_READ_OFTEN | GRALLOC_USAGE_SW_WRITE_OFTEN, &pixels);
-            buffer->unlock();
+            do {
+                if (!(usage & GRALLOC_USAGE_SW_WRITE_MASK)) break;
+                native_handle_t* gralloc_handle = UnwrapNativeCodec2GrallocHandle(handle);
+                if (nullptr == gralloc_handle) break;
+                sp<GraphicBuffer> buffer =
+                        new GraphicBuffer(gralloc_handle, GraphicBuffer::CLONE_HANDLE, width,
+                                          height, format, 1, usage, stride);
+                native_handle_delete(gralloc_handle);
+                void* pixels;
+                if (buffer->lock(GRALLOC_USAGE_SW_WRITE_OFTEN, &pixels)) break;
+                buffer->unlock();
+            } while (0);
         }
         if (!encode(inputBlock, index, timestamp)) {
             return;
