@@ -501,42 +501,11 @@ void V4L2DecodeComponent::pumpPendingWorks() {
         ALOGW_IF(!res.second, "We already inserted bitstreamId %d to decoder?", bitstreamId);
 
         if (!isEmptyWork) {
-            // If input.buffers is not empty, the buffer should have meaningful content inside.
-            C2ConstLinearBlock linearBlock =
-                    work->input.buffers.front()->data().linearBlocks().front();
-            ALOG_ASSERT(linearBlock.size() > 0u, "Input buffer of work(%d) is empty.", bitstreamId);
-
-            // Try to parse color aspects from bitstream for CSD work of non-secure H264 codec or HEVC
-            // codec (HEVC will only be CENCv3 which is parseable for secure).
-            if (isCSDWork && ((!mIsSecure && mIntfImpl->getVideoCodec() == VideoCodec::H264) ||
-                              mIntfImpl->getVideoCodec() == VideoCodec::HEVC)) {
-                C2StreamColorAspectsInfo::input codedAspects = {0u};
-                if (parseCodedColorAspects(linearBlock, mIntfImpl->getVideoCodec(),
-                                           &codedAspects)) {
-                    std::vector<std::unique_ptr<C2SettingResult>> failures;
-                    c2_status_t status =
-                            mIntfImpl->config({&codedAspects}, C2_MAY_BLOCK, &failures);
-                    if (status != C2_OK) {
-                        ALOGE("Failed to config color aspects to interface: %d", status);
-                        reportError(status);
-                        return;
-                    }
-
-                    // Record current frame index, color aspects should be updated only for output
-                    // buffers whose frame indices are not less than this one.
-                    mPendingColorAspectsChange = true;
-                    mPendingColorAspectsChangeFrameIndex = work->input.ordinal.frameIndex.peeku();
-                }
+            if (isCSDWork) {
+                processCSDWork(bitstreamId, work);
+            } else {
+                processWork(bitstreamId, work);
             }
-
-            std::unique_ptr<ConstBitstreamBuffer> buffer = std::make_unique<ConstBitstreamBuffer>(
-                    bitstreamId, linearBlock, linearBlock.offset(), linearBlock.size());
-            if (!buffer) {
-                reportError(C2_CORRUPTED);
-                return;
-            }
-            mDecoder->decode(std::move(buffer), ::base::BindOnce(&V4L2DecodeComponent::onDecodeDone,
-                                                                 mWeakThis, bitstreamId));
         }
 
         if (isEOSWork) {
@@ -547,6 +516,69 @@ void V4L2DecodeComponent::pumpPendingWorks() {
         // Directly report the empty CSD work as finished.
         if (isCSDWork && isEmptyWork) reportWorkIfFinished(bitstreamId);
     }
+}
+
+void V4L2DecodeComponent::processCSDWork(const int32_t bitstreamId, const C2Work* work) {
+
+    // If input.buffers is not empty, the buffer should have meaningful content inside.
+    C2ConstLinearBlock linearBlock =
+            work->input.buffers.front()->data().linearBlocks().front();
+    ALOG_ASSERT(linearBlock.size() > 0u, "Input buffer of work(%d) is empty.", bitstreamId);
+
+    if (mIntfImpl->getVideoCodec() == VideoCodec::VP9) {
+        // The VP9 decoder does not support and does not need the Codec Specific Data (CSD):
+        // https://www.webmproject.org/docs/container/#vp9-codec-feature-metadata-codecprivate.
+        // The most of its content (profile, level, bit depth and chroma subsampling)
+        // can be extracted directly from VP9 bitstream. Ignore CSD if it was passed.
+        reportWorkIfFinished(bitstreamId);
+        return;
+    } else if ((!mIsSecure && mIntfImpl->getVideoCodec() == VideoCodec::H264) ||
+                  mIntfImpl->getVideoCodec() == VideoCodec::HEVC) {
+        // Try to parse color aspects from bitstream for CSD work of non-secure H264 codec or HEVC
+        // codec (HEVC will only be CENCv3 which is parseable for secure).
+        C2StreamColorAspectsInfo::input codedAspects = {0u};
+        if (parseCodedColorAspects(linearBlock, mIntfImpl->getVideoCodec(),
+                                   &codedAspects)) {
+            std::vector<std::unique_ptr<C2SettingResult>> failures;
+            c2_status_t status =
+                    mIntfImpl->config({&codedAspects}, C2_MAY_BLOCK, &failures);
+            if (status != C2_OK) {
+                ALOGE("Failed to config color aspects to interface: %d", status);
+                reportError(status);
+                return;
+            }
+            // Record current frame index, color aspects should be updated only for output
+            // buffers whose frame indices are not less than this one.
+            mPendingColorAspectsChange = true;
+            mPendingColorAspectsChangeFrameIndex = work->input.ordinal.frameIndex.peeku();
+        }
+    }
+
+    processWorkBuffer(bitstreamId, linearBlock);
+}
+
+void V4L2DecodeComponent::processWork(const int32_t bitstreamId, const C2Work* work) {
+
+    // If input.buffers is not empty, the buffer should have meaningful content inside.
+    C2ConstLinearBlock linearBlock =
+            work->input.buffers.front()->data().linearBlocks().front();
+    ALOG_ASSERT(linearBlock.size() > 0u, "Input buffer of work(%d) is empty.", bitstreamId);
+
+    processWorkBuffer(bitstreamId, linearBlock);
+
+}
+
+void V4L2DecodeComponent::processWorkBuffer(const int32_t bitstreamId,
+                                            const C2ConstLinearBlock& linearBlock) {
+
+    std::unique_ptr<ConstBitstreamBuffer> buffer = std::make_unique<ConstBitstreamBuffer>(
+            bitstreamId, linearBlock, linearBlock.offset(), linearBlock.size());
+    if (!buffer) {
+        reportError(C2_CORRUPTED);
+        return;
+    }
+    mDecoder->decode(std::move(buffer), ::base::BindOnce(&V4L2DecodeComponent::onDecodeDone,
+                                                                 mWeakThis, bitstreamId));
 }
 
 void V4L2DecodeComponent::onDecodeDone(int32_t bitstreamId, VideoDecoder::DecodeStatus status) {

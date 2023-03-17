@@ -69,6 +69,11 @@ private:
 
     // Try to process pending works at |mPendingWorks|. Paused when |mIsDraining| is set.
     void pumpPendingWorks();
+
+    void processCSDWork(const int32_t bitstreamId, const C2Work* work);
+    void processWork(const int32_t bitstreamId, const C2Work* work);
+    void processWorkBuffer(const int32_t bitstreamId, const C2ConstLinearBlock& linearBlock);
+
     // Get the buffer pool.
     std::unique_ptr<VideoFramePool> getVideoFramePool(const ui::Size& size,
                                                       HalPixelFormat pixelFormat,
