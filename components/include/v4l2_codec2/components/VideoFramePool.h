@@ -72,7 +72,7 @@ private:
     // should provide to client.
     size_t mMaxBufferCount;
     // Contains known buffer ids that are valid for the pool.
-    std::set<uint32_t> mBuffers;
+    std::map<uint32_t, std::shared_ptr<C2GraphicBlock>> mBuffers;
 
     const ui::Size mSize;
     const HalPixelFormat mPixelFormat;
