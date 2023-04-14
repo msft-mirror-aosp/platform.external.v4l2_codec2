@@ -246,14 +246,14 @@ void VideoFramePool::getVideoFrameTask() {
     }
 
     ALOG_ASSERT(block != nullptr);
-    std::unique_ptr<VideoFrame> frame = VideoFrame::Create(block);
+    std::unique_ptr<VideoFrame> frame = VideoFrame::Create(std::move(block));
     std::optional<FrameWithBlockId> frameWithBlockId;
 
     if (bufferId && frame) {
         // Only pass the frame + id pair if both have successfully been obtained.
         // Otherwise exit the loop so a nullopt is passed to the client.
         frameWithBlockId = std::make_pair(std::move(frame), *bufferId);
-        mBuffers[*bufferId] = block;
+        mBuffers.insert(*bufferId);
     } else {
         ALOGE("%s(): Failed to generate VideoFrame or get the buffer id.", __func__);
     }
