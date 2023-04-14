@@ -179,7 +179,7 @@ void VideoFramePool::getVideoFrameTask() {
     ALOG_ASSERT(mFetchTaskRunner->RunsTasksInCurrentSequence());
 
     // Variables used to exponential backoff retry when buffer fetching times out.
-    constexpr size_t kFetchRetryDelayInit = 64;    // Initial delay: 64us
+    constexpr size_t kFetchRetryDelayInit = 256;   // Initial delay: 256us
     constexpr size_t kFetchRetryDelayMax = 16384;  // Max delay: 16ms (1 frame at 60fps)
     constexpr size_t kFenceWaitTimeoutNs = 16000000;  // 16ms (1 frame at 60fps)
     static size_t sNumRetries = 0;
@@ -242,7 +242,7 @@ void VideoFramePool::getVideoFrameTask() {
                 FROM_HERE, ::base::BindOnce(&VideoFramePool::getVideoFrameTask, mFetchWeakThis),
                 ::base::TimeDelta::FromMicroseconds(sDelay));
 
-        sDelay = std::min(sDelay * 2, kFetchRetryDelayMax);  // Exponential backoff
+        sDelay = std::min(sDelay * 4, kFetchRetryDelayMax);  // Exponential backoff
         sNumRetries++;
         return;
     }
