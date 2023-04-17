@@ -190,7 +190,18 @@ void VideoFramePool::getVideoFrameTask() {
     c2_status_t err = mBlockPool->fetchGraphicBlock(mSize.width, mSize.height,
                                                     static_cast<uint32_t>(mPixelFormat),
                                                     mMemoryUsage, &block, &fence);
-    if (err == C2_BLOCKING) {
+    // C2_BLOCKING can be returned either based on the state of the block pool itself
+    // or the state of the underlying buffer queue. If the cause is the underlying
+    // buffer queue, then the block pool returns a null fence. Since a null fence is
+    // immediately ready, we need to delay instead of trying to wait on the fence, to
+    // avoid spinning.
+    //
+    // Unfortunately, a null fence is considered a valid fence, so the best we can do
+    // to detect a null fence is to assume that any fence that is immediately ready
+    // is the null fence. A false positive by racing with a real fence can result in
+    // an unnecessary delay, but the only alternative is to ignore fences altogether
+    // and always delay.
+    if (err == C2_BLOCKING && !fence.ready()) {
         err = fence.wait(kFenceWaitTimeoutNs);
         if (err == C2_OK) {
             ALOGV("%s(): fence wait succeded, retrying now", __func__);
