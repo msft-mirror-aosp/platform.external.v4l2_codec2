@@ -321,16 +321,6 @@ void V4L2Decoder::decode(std::unique_ptr<ConstBitstreamBuffer> buffer, DecodeCB 
 
     if (mState == State::Idle) {
         setState(State::Decoding);
-
-        if (!mInitialEosBuffer) {
-            // V4L2Decoder stops fetching frames after flush, in order to avoid requesting frames
-            // in case of disconnected IGBP after EOS. Decoder switches to Decoding state
-            // and |mInitialEosBuffer| is nullptr. It means that decoder was flushed/drained
-            // and the DRC occured so |mVideoFramePool| can be used to fetch frames.
-            // Restart fetching video frames here to fill |mOutputQueue| with buffers
-            // for output of the current and following requests.
-            tryFetchVideoFrame();
-        }
     }
 
     mDecodeRequests.push(DecodeRequest(std::move(buffer), std::move(decodeCb)));
@@ -520,7 +510,6 @@ void V4L2Decoder::flush() {
     // a buffer is DQBUF from output queue. Now all the buffers are dropped at mOutputQueue, we
     // have to trigger tryFetchVideoFrame() here.
     if (mVideoFramePool) {
-        // TODO(b/268305422): Reorganize when V4L2Decoder requests video frames from VideoFramePool
         tryFetchVideoFrame();
     }
 
