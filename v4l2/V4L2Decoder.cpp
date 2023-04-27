@@ -67,11 +67,11 @@ bool waitForDRC(const C2ConstLinearBlock& input, std::optional<VideoCodec> codec
 std::unique_ptr<VideoDecoder> V4L2Decoder::Create(
         uint32_t debugStreamId, const VideoCodec& codec, const size_t inputBufferSize,
         const size_t minNumOutputBuffers, GetPoolCB getPoolCb, OutputCB outputCb, ErrorCB errorCb,
-        scoped_refptr<::base::SequencedTaskRunner> taskRunner) {
+        scoped_refptr<::base::SequencedTaskRunner> taskRunner, bool isSecure) {
     std::unique_ptr<V4L2Decoder> decoder =
             ::base::WrapUnique<V4L2Decoder>(new V4L2Decoder(debugStreamId, taskRunner));
     if (!decoder->start(codec, inputBufferSize, minNumOutputBuffers, std::move(getPoolCb),
-                        std::move(outputCb), std::move(errorCb))) {
+                        std::move(outputCb), std::move(errorCb), isSecure)) {
         return nullptr;
     }
     return decoder;
@@ -113,7 +113,7 @@ V4L2Decoder::~V4L2Decoder() {
 
 bool V4L2Decoder::start(const VideoCodec& codec, const size_t inputBufferSize,
                         const size_t minNumOutputBuffers, GetPoolCB getPoolCb, OutputCB outputCb,
-                        ErrorCB errorCb) {
+                        ErrorCB errorCb, bool isSecure) {
     ATRACE_CALL();
     ALOGV("%s(codec=%s, inputBufferSize=%zu, minNumOutputBuffers=%zu)", __func__,
           VideoCodecToString(codec), inputBufferSize, minNumOutputBuffers);
@@ -124,6 +124,7 @@ bool V4L2Decoder::start(const VideoCodec& codec, const size_t inputBufferSize,
     mOutputCb = std::move(outputCb);
     mErrorCb = std::move(errorCb);
     mCodec = codec;
+    mIsSecure = isSecure;
 
     if (mState == State::Error) {
         ALOGE("Ignore due to error state.");
@@ -359,7 +360,11 @@ void V4L2Decoder::decode(std::unique_ptr<ConstBitstreamBuffer> buffer, DecodeCB 
         setState(State::Decoding);
     }
 
-    if (mInitialEosBuffer && !mPendingDRC) mPendingDRC = waitForDRC(buffer->dmabuf, mCodec);
+    // To determine if the DRC is pending, the access to the frame data is
+    // required. It's not possible to access the frame directly for the secure
+    // playback, so this check must be skipped. b/279834186
+    if (!mIsSecure && mInitialEosBuffer && !mPendingDRC)
+        mPendingDRC = waitForDRC(buffer->dmabuf, mCodec);
 
     mDecodeRequests.push(DecodeRequest(std::move(buffer), std::move(decodeCb)));
     pumpDecodeRequest();

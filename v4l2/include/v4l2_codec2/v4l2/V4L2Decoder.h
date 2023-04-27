@@ -40,7 +40,7 @@ public:
     static std::unique_ptr<VideoDecoder> Create(
             uint32_t debugStreamId, const VideoCodec& codec, const size_t inputBufferSize,
             const size_t minNumOutputBuffers, GetPoolCB getPoolCB, OutputCB outputCb,
-            ErrorCB errorCb, scoped_refptr<::base::SequencedTaskRunner> taskRunner);
+            ErrorCB errorCb, scoped_refptr<::base::SequencedTaskRunner> taskRunner, bool isSecure);
     ~V4L2Decoder() override;
 
     void decode(std::unique_ptr<ConstBitstreamBuffer> buffer, DecodeCB decodeCb) override;
@@ -71,7 +71,7 @@ private:
     V4L2Decoder(uint32_t debugStreamId, scoped_refptr<::base::SequencedTaskRunner> taskRunner);
     bool start(const VideoCodec& codec, const size_t inputBufferSize,
                const size_t minNumOutputBuffers, GetPoolCB getPoolCb, OutputCB outputCb,
-               ErrorCB errorCb);
+               ErrorCB errorCb, bool isSecure);
     bool setupInputFormat(const uint32_t inputPixelFormat, const size_t inputBufferSize);
 
     // Sets minimal resolution and allocates minimal amount of output buffers for
@@ -115,6 +115,10 @@ private:
     std::map<int32_t, DecodeCB> mPendingDecodeCbs;
     // Marks that we need to wait for DRC before drain can complete.
     bool mPendingDRC = false;
+    // Holds information about secure playback, which won't allow decoder to
+    // access frames in order to provide extra meta information (like checking
+    // for pending DRC).
+    bool mIsSecure;
     VideoCodec mCodec;
 
     // Tracks the last DMA buffer ID which was used for a given V4L2 input
