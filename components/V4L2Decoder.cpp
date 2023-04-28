@@ -757,6 +757,17 @@ void V4L2Decoder::onVideoFrameReady(
     if (iter != mBlockIdToV4L2Id.end()) {
         // If we have met this block in the past, reuse the same V4L2 buffer.
         outputBuffer = mOutputQueue->getFreeBuffer(iter->second);
+        if (!outputBuffer) {
+            // NOTE(b/281477122): There is a bug in C2BufferQueueBlock. Its buffer queue slots
+            // cache is inconsistent when MediaSync is used and a buffer with the same dmabuf id
+            // can be returned twice despite being already in use by V4L2Decoder. We drop the
+            // buffer here in order to prevent unwanted errors. It is safe, bacause its allocation
+            // will be kept alive by the C2GraphicBlock instance.
+            ALOGW("%s(): The frame have been supplied again, despite being already enqueued",
+                  __func__);
+            tryFetchVideoFrame();
+            return;
+        }
     } else if (mBlockIdToV4L2Id.size() < mOutputQueue->allocatedBuffersCount()) {
         // If this is the first time we see this block, give it the next
         // available V4L2 buffer.
