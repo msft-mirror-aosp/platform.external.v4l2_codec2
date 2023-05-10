@@ -448,9 +448,17 @@ uint32_t V4L2DecodeInterface::getOutputDelay(VideoCodec codec) {
     case VideoCodec::HEVC:
         return 16;
     case VideoCodec::VP8:
-        return 0;
+        // The decoder might held a few frames as a reference for decoding. Since Android T
+        // the Codec2 is more prone to timeout the component if one is not producing frames. This
+        // might especially occur when those frames are held for reference and playback/decoding
+        // is paused. With increased output delay we inform Codec2 not to timeout the component,
+        // if number of frames in components is less then the number of maximum reference frames
+        // that could be held by decoder.
+        // Reference: RFC 6386 Section 3. Compressed Frame Types
+        return 3;
     case VideoCodec::VP9:
-        return 0;
+        // Reference: https://www.webmproject.org/vp9/levels/
+        return 8;
     }
 }
 
