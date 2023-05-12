@@ -20,6 +20,7 @@ cc_library {
         "VideoFramePool.cpp",
         "V4L2ComponentFactory.cpp",
         "V4L2ComponentStore.cpp",
+        "ComponentStore.cpp",
         "V4L2Decoder.cpp",
         "V4L2DecodeComponent.cpp",
         "V4L2DecodeInterface.cpp",
