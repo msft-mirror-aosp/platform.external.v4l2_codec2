@@ -398,6 +398,9 @@ public:
     // Gets all capabilites of the decoder devices.
     static SupportedCapabilities queryDecodingCapabilities(VideoCodec codec);
 
+    // Gets all capabilites of the encoder devices.
+    static SupportedCapabilities queryEncodingCapabilities(VideoCodec codec);
+
     // Create and initialize an appropriate V4L2Device instance for the current platform, or return
     // nullptr if not available.
     static scoped_refptr<V4L2Device> create(uint32_t debugStreamId = -1);

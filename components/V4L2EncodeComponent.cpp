@@ -194,7 +194,7 @@ std::atomic<int32_t> V4L2EncodeComponent::sConcurrentInstances = 0;
 
 // static
 std::shared_ptr<C2Component> V4L2EncodeComponent::create(
-        C2String name, c2_node_id_t id, std::shared_ptr<C2ReflectorHelper> helper,
+        C2String name, c2_node_id_t id, std::shared_ptr<V4L2EncodeInterface> intfImpl,
         C2ComponentFactory::ComponentDeleter deleter) {
     ALOGV("%s(%s)", __func__, name.c_str());
 
@@ -209,13 +209,7 @@ std::shared_ptr<C2Component> V4L2EncodeComponent::create(
         return nullptr;
     }
 
-    auto interface = std::make_shared<V4L2EncodeInterface>(name, std::move(helper));
-    if (interface->status() != C2_OK) {
-        ALOGE("Component interface initialization failed (error code %d)", interface->status());
-        return nullptr;
-    }
-
-    return std::shared_ptr<C2Component>(new V4L2EncodeComponent(name, id, std::move(interface)),
+    return std::shared_ptr<C2Component>(new V4L2EncodeComponent(name, id, std::move(intfImpl)),
                                         deleter);
 }
 

@@ -14,6 +14,7 @@
 #include <ui/Size.h>
 #include <util/C2InterfaceHelper.h>
 
+#include <v4l2_codec2/common/Common.h>
 #include <v4l2_codec2/common/EncodeHelpers.h>
 
 namespace media {
@@ -26,7 +27,8 @@ namespace android {
 // framework to query the component's capabilities and request configuration changes.
 class V4L2EncodeInterface : public C2InterfaceHelper {
 public:
-    V4L2EncodeInterface(const C2String& name, std::shared_ptr<C2ReflectorHelper> helper);
+    V4L2EncodeInterface(const C2String& name, std::shared_ptr<C2ReflectorHelper> helper,
+                        const SupportedCapabilities& caps);
 
     // Interfaces for the V4L2EncodeInterface
     // Note: these getters are not thread-safe. For dynamic parameters, component should use
@@ -53,7 +55,7 @@ public:
     void setFramerate(uint32_t framerate) { mFrameRate->value = framerate; }
 
 protected:
-    void Initialize(const C2String& name);
+    void Initialize(const C2String& name, const SupportedCapabilities& caps);
 
     // Configurable parameter setters.
     static C2R H264ProfileLevelSetter(bool mayBlock, C2P<C2StreamProfileLevelInfo::output>& info,

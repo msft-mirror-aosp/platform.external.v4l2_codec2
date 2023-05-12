@@ -2271,6 +2271,15 @@ SupportedCapabilities V4L2Device::queryDecodingCapabilities(VideoCodec codec) {
     return caps;
 }
 
+// static
+SupportedCapabilities V4L2Device::queryEncodingCapabilities(VideoCodec codec) {
+    SupportedCapabilities caps;
+    caps.codec = codec;
+    caps.supportedProfiles = V4L2Device::getSupportedProfiles(
+            V4L2Device::Type::kEncoder, {V4L2Device::videoCodecToPixFmt(codec)});
+    return caps;
+}
+
 std::vector<C2Config::level_t> V4L2Device::enumerateSupportedDecodeLevels(
         VideoCodec videoCodecType) {
     std::vector<C2Config::level_t> supportedLevels;

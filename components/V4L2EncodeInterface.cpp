@@ -18,7 +18,6 @@
 
 #include <v4l2_codec2/common/Common.h>
 #include <v4l2_codec2/common/V4L2ComponentCommon.h>
-#include <v4l2_codec2/common/V4L2Device.h>
 #include <v4l2_codec2/common/VideoTypes.h>
 
 using android::hardware::graphics::common::V1_0::BufferUsage;
@@ -42,16 +41,6 @@ constexpr uint32_t kDefaultBitrate = 64000;
 // The maximal output bitrate in bits per second. It's the max bitrate of AVC Level4.1.
 // TODO: increase this in the future for supporting higher level/resolution encoding.
 constexpr uint32_t kMaxBitrate = 50000000;
-
-std::optional<VideoCodec> getCodecFromComponentName(const std::string& name) {
-    if (name == V4L2ComponentName::kH264Encoder) return VideoCodec::H264;
-    if (name == V4L2ComponentName::kVP8Encoder) return VideoCodec::VP8;
-    if (name == V4L2ComponentName::kVP9Encoder) return VideoCodec::VP9;
-
-    ALOGE("Unknown name: %s", name.c_str());
-    return std::nullopt;
-}
-
 }  // namespace
 
 //static
@@ -219,33 +208,23 @@ C2R V4L2EncodeInterface::IntraRefreshPeriodSetter(bool mayBlock,
 }
 
 V4L2EncodeInterface::V4L2EncodeInterface(const C2String& name,
-                                         std::shared_ptr<C2ReflectorHelper> helper)
+                                         std::shared_ptr<C2ReflectorHelper> helper,
+                                         const SupportedCapabilities& caps)
       : C2InterfaceHelper(std::move(helper)) {
     ALOGV("%s(%s)", __func__, name.c_str());
 
     setDerivedInstance(this);
 
-    Initialize(name);
+    Initialize(name, caps);
 }
 
-void V4L2EncodeInterface::Initialize(const C2String& name) {
-    auto codec = getCodecFromComponentName(name);
-    if (!codec) {
-        ALOGE("Invalid component name");
-        mInitStatus = C2_BAD_VALUE;
-        return;
-    }
-
-    auto supported_profiles = V4L2Device::getSupportedProfiles(
-            V4L2Device::Type::kEncoder, {V4L2Device::videoCodecToPixFmt(codec.value())});
-
-    // Compile the list of supported profiles.
+void V4L2EncodeInterface::Initialize(const C2String& name, const SupportedCapabilities& caps) {
     // Note: unsigned int is used here, since std::vector<C2Config::profile_t> cannot convert to
     // std::vector<unsigned int> required by the c2 framework below.
     std::vector<unsigned int> profiles;
     ui::Size maxSize;
-    for (const auto& supportedProfile : supported_profiles) {
-        if (!isValidProfileForCodec(codec.value(), supportedProfile.profile)) {
+    for (const auto& supportedProfile : caps.supportedProfiles) {
+        if (!isValidProfileForCodec(caps.codec, supportedProfile.profile)) {
             continue;  // Ignore unrecognizable or unsupported profiles.
         }
         ALOGV("Queried c2_profile = 0x%x : max_size = %d x %d", supportedProfile.profile,
@@ -301,7 +280,7 @@ void V4L2EncodeInterface::Initialize(const C2String& name) {
                     .build());
 
     std::string outputMime;
-    if (getCodecFromComponentName(name) == VideoCodec::H264) {
+    if (caps.codec == VideoCodec::H264) {
         outputMime = MEDIA_MIMETYPE_VIDEO_AVC;
         C2Config::profile_t minProfile = static_cast<C2Config::profile_t>(
                 *std::min_element(profiles.begin(), profiles.end()));
@@ -323,14 +302,14 @@ void V4L2EncodeInterface::Initialize(const C2String& name) {
                                                  C2Config::LEVEL_AVC_5, C2Config::LEVEL_AVC_5_1})})
                         .withSetter(H264ProfileLevelSetter, mInputVisibleSize, mFrameRate, mBitrate)
                         .build());
-    } else if (getCodecFromComponentName(name) == VideoCodec::VP8) {
+    } else if (caps.codec == VideoCodec::VP8) {
         outputMime = MEDIA_MIMETYPE_VIDEO_VP8;
         // VP8 doesn't have conventional profiles, we'll use profile0 if the VP8 codec is requested.
         addParameter(DefineParam(mProfileLevel, C2_PARAMKEY_PROFILE_LEVEL)
                              .withConstValue(new C2StreamProfileLevelInfo::output(
                                      0u, C2Config::PROFILE_VP8_0, C2Config::LEVEL_UNUSED))
                              .build());
-    } else if (getCodecFromComponentName(name) == VideoCodec::VP9) {
+    } else if (caps.codec == VideoCodec::VP9) {
         outputMime = MEDIA_MIMETYPE_VIDEO_VP9;
         C2Config::profile_t minProfile = static_cast<C2Config::profile_t>(
                 *std::min_element(profiles.begin(), profiles.end()));

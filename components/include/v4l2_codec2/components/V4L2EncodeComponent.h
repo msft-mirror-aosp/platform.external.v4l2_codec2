@@ -38,7 +38,7 @@ class V4L2EncodeComponent : public C2Component,
 public:
     // Create a new instance of the V4L2EncodeComponent.
     static std::shared_ptr<C2Component> create(C2String name, c2_node_id_t id,
-                                               std::shared_ptr<C2ReflectorHelper> helper,
+                                               std::shared_ptr<V4L2EncodeInterface> intfImpl,
                                                C2ComponentFactory::ComponentDeleter deleter);
 
     virtual ~V4L2EncodeComponent() override;

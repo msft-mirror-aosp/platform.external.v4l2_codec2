@@ -71,7 +71,13 @@ c2_status_t V4L2ComponentFactory::createComponent(c2_node_id_t id,
     }
 
     if (mIsEncoder) {
-        *component = V4L2EncodeComponent::create(mComponentName, id, mReflector, deleter);
+        std::shared_ptr<V4L2EncodeInterface> intfImpl;
+        c2_status_t status = createEncodeInterface(&intfImpl);
+        if (status != C2_OK) {
+            return status;
+        }
+
+        *component = V4L2EncodeComponent::create(mComponentName, id, std::move(intfImpl), deleter);
     } else {
         std::shared_ptr<V4L2DecodeInterface> intfImpl;
         c2_status_t status = createDecodeInterface(&intfImpl);
@@ -95,10 +101,15 @@ c2_status_t V4L2ComponentFactory::createInterface(
     }
 
     if (mIsEncoder) {
+        std::shared_ptr<V4L2EncodeInterface> intfImpl;
+        c2_status_t status = createEncodeInterface(&intfImpl);
+        if (status != C2_OK) {
+            return status;
+        }
+
         *interface = std::shared_ptr<C2ComponentInterface>(
-                new SimpleInterface<V4L2EncodeInterface>(
-                        mComponentName.c_str(), id,
-                        std::make_shared<V4L2EncodeInterface>(mComponentName, mReflector)),
+                new SimpleInterface<V4L2EncodeInterface>(mComponentName.c_str(), id,
+                                                         std::move(intfImpl)),
                 deleter);
         return C2_OK;
     } else {
@@ -114,6 +125,25 @@ c2_status_t V4L2ComponentFactory::createInterface(
                 deleter);
         return C2_OK;
     }
+}
+
+c2_status_t V4L2ComponentFactory::createEncodeInterface(
+        std::shared_ptr<V4L2EncodeInterface>* intfImpl) {
+    if (!mCapabilites) {
+        auto codec = V4L2ComponentName::getCodec(mComponentName);
+        if (!codec) {
+            return C2_CORRUPTED;
+        }
+        mCapabilites = std::make_unique<SupportedCapabilities>(
+                V4L2Device::queryEncodingCapabilities(*codec));
+    }
+
+    *intfImpl = std::make_shared<V4L2EncodeInterface>(mComponentName, mReflector, *mCapabilites);
+    if (*intfImpl == nullptr) {
+        return C2_NO_MEMORY;
+    }
+
+    return (*intfImpl)->status();
 }
 
 c2_status_t V4L2ComponentFactory::createDecodeInterface(
