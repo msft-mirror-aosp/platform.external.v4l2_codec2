@@ -2140,8 +2140,8 @@ std::vector<C2Config::level_t> V4L2Device::getSupportedDecodeLevels(VideoCodec v
 }
 
 // static
-V4L2Device::SupportedProfiles V4L2Device::getSupportedProfiles(
-        V4L2Device::Type type, const std::vector<uint32_t>& pixelFormats) {
+SupportedProfiles V4L2Device::getSupportedProfiles(V4L2Device::Type type,
+                                                   const std::vector<uint32_t>& pixelFormats) {
     SupportedProfiles supportedProfiles;
 
     for (const auto& info : getDeviceInfosForType(type)) {
@@ -2258,6 +2258,19 @@ C2Config::level_t V4L2Device::getDefaultLevel(VideoCodec codec) {
     return C2Config::LEVEL_UNUSED;
 }
 
+// static
+SupportedCapabilities V4L2Device::queryDecodingCapabilities(VideoCodec codec) {
+    SupportedCapabilities caps;
+    caps.codec = codec;
+    caps.supportedLevels = V4L2Device::getSupportedDecodeLevels(codec);
+    caps.defaultLevel = V4L2Device::getDefaultLevel(codec);
+    caps.supportedProfiles = V4L2Device::getSupportedProfiles(
+            V4L2Device::Type::kDecoder, {V4L2Device::videoCodecToPixFmt(codec)});
+    caps.defaultLevel = V4L2Device::getDefaultLevel(codec);
+
+    return caps;
+}
+
 std::vector<C2Config::level_t> V4L2Device::enumerateSupportedDecodeLevels(
         VideoCodec videoCodecType) {
     std::vector<C2Config::level_t> supportedLevels;
@@ -2275,7 +2288,7 @@ std::vector<C2Config::level_t> V4L2Device::enumerateSupportedDecodeLevels(
     return supportedLevels;
 }
 
-V4L2Device::SupportedProfiles V4L2Device::enumerateSupportedProfiles(
+SupportedProfiles V4L2Device::enumerateSupportedProfiles(
         V4L2Device::Type type, const std::vector<uint32_t>& pixelFormats) {
     SupportedProfiles profiles;
 

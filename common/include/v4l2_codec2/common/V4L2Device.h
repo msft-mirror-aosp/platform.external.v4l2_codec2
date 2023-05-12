@@ -341,17 +341,6 @@ private:
 
 class V4L2Device : public base::RefCountedThreadSafe<V4L2Device> {
 public:
-    // Specification of an encoding profile supported by an encoder.
-    struct SupportedProfile {
-        C2Config::profile_t profile = C2Config::PROFILE_UNUSED;
-        ui::Size min_resolution;
-        ui::Size max_resolution;
-        uint32_t max_framerate_numerator = 0;
-        uint32_t max_framerate_denominator = 0;
-        bool encrypted_only = false;
-    };
-    using SupportedProfiles = std::vector<SupportedProfile>;
-
     // Utility format conversion functions
     // If there is no corresponding single- or multi-planar format, returns 0.
     static uint32_t c2ProfileToV4L2PixFmt(C2Config::profile_t profile, bool sliceBased);
@@ -405,6 +394,9 @@ public:
 
     // Gets first current profile for any device
     static C2Config::level_t getDefaultLevel(VideoCodec codec);
+
+    // Gets all capabilites of the decoder devices.
+    static SupportedCapabilities queryDecodingCapabilities(VideoCodec codec);
 
     // Create and initialize an appropriate V4L2Device instance for the current platform, or return
     // nullptr if not available.

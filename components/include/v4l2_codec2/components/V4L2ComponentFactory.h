@@ -10,8 +10,12 @@
 
 #include <C2ComponentFactory.h>
 #include <util/C2InterfaceHelper.h>
+#include <v4l2_codec2/common/Common.h>
 
 namespace android {
+
+struct SupportedCapabilities;
+class V4L2DecodeInterface;
 
 class V4L2ComponentFactory : public C2ComponentFactory {
 public:
@@ -29,9 +33,12 @@ public:
                                 InterfaceDeleter deleter) override;
 
 private:
+    c2_status_t createDecodeInterface(std::shared_ptr<V4L2DecodeInterface>* intfImpl);
+
     const std::string mComponentName;
     const bool mIsEncoder;
     std::shared_ptr<C2ReflectorHelper> mReflector;
+    std::unique_ptr<SupportedCapabilities> mCapabilites;
 };
 
 }  // namespace android

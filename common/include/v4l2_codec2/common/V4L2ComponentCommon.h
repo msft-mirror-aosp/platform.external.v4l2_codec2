@@ -5,6 +5,8 @@
 #ifndef ANDROID_V4L2_CODEC2_COMMON_V4L2_COMPONENT_COMMON_H
 #define ANDROID_V4L2_CODEC2_COMMON_V4L2_COMPONENT_COMMON_H
 
+#include <v4l2_codec2/common/VideoTypes.h>
+#include <optional>
 #include <string>
 
 namespace android {
@@ -30,6 +32,13 @@ struct V4L2ComponentName {
     // Return true if |name| is a encoder name.
     // Note that |name| should be a valid component name.
     static bool isEncoder(const char* name);
+
+    // Return true if |name| is a decoder name.
+    // Note that |name| should be a valid component name.
+    static bool isDecoder(const std::string& name);
+
+    // Returns VideoCodec for |name| component
+    static std::optional<VideoCodec> getCodec(const std::string& name);
 };
 
 }  // namespace android

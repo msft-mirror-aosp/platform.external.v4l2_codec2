@@ -12,13 +12,15 @@
 #include <ui/Size.h>
 #include <util/C2InterfaceHelper.h>
 
+#include <v4l2_codec2/common/Common.h>
 #include <v4l2_codec2/common/VideoTypes.h>
 
 namespace android {
 
 class V4L2DecodeInterface : public C2InterfaceHelper {
 public:
-    V4L2DecodeInterface(const std::string& name, const std::shared_ptr<C2ReflectorHelper>& helper);
+    V4L2DecodeInterface(const std::string& name, const std::shared_ptr<C2ReflectorHelper>& helper,
+                        const SupportedCapabilities& caps);
     V4L2DecodeInterface(const V4L2DecodeInterface&) = delete;
     V4L2DecodeInterface& operator=(const V4L2DecodeInterface&) = delete;
     ~V4L2DecodeInterface() = default;

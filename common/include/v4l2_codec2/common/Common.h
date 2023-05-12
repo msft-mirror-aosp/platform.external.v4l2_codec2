@@ -34,6 +34,26 @@ struct VideoFrameLayout {
     bool mMultiPlanar = false;
 };
 
+// Specification of an encoding profile supported by an encoder or decoder.
+struct SupportedProfile {
+    C2Config::profile_t profile = C2Config::PROFILE_UNUSED;
+    ui::Size min_resolution;
+    ui::Size max_resolution;
+    uint32_t max_framerate_numerator = 0;
+    uint32_t max_framerate_denominator = 0;
+    bool encrypted_only = false;
+};
+using SupportedProfiles = std::vector<SupportedProfile>;
+
+// Contains the capabilites of the decoder or encoder.
+struct SupportedCapabilities {
+    VideoCodec codec;
+    SupportedProfiles supportedProfiles;
+    C2Config::profile_t defaultProfile = C2Config::PROFILE_UNUSED;
+    std::vector<C2Config::level_t> supportedLevels;
+    C2Config::level_t defaultLevel = C2Config::LEVEL_UNUSED;
+};
+
 // Check whether |rect1| completely contains |rect2|.
 bool contains(const Rect& rect1, const Rect& rect2);
 

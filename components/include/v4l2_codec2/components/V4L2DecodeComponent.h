@@ -27,11 +27,10 @@ class V4L2DecodeComponent : public C2Component,
                             public std::enable_shared_from_this<V4L2DecodeComponent> {
 public:
     static std::shared_ptr<C2Component> create(const std::string& name, c2_node_id_t id,
-                                               const std::shared_ptr<C2ReflectorHelper>& helper,
+                                               std::shared_ptr<V4L2DecodeInterface> intfImpl,
                                                C2ComponentFactory::ComponentDeleter deleter);
     V4L2DecodeComponent(uint32_t debugStreamId, const std::string& name, c2_node_id_t id,
-                        const std::shared_ptr<C2ReflectorHelper>& helper,
-                        const std::shared_ptr<V4L2DecodeInterface>& intfImpl);
+                        std::shared_ptr<V4L2DecodeInterface> intfImpl);
     ~V4L2DecodeComponent() override;
 
     // Implementation of C2Component.

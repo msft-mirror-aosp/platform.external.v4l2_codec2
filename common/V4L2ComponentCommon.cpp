@@ -8,6 +8,7 @@
 #include <v4l2_codec2/common/V4L2ComponentCommon.h>
 
 #include <log/log.h>
+#include <set>
 
 namespace android {
 
@@ -37,6 +38,40 @@ bool V4L2ComponentName::isEncoder(const char* name) {
     ALOG_ASSERT(isValid(name));
 
     return name == kH264Encoder || name == kVP8Encoder || name == kVP9Encoder;
+}
+
+// static
+bool V4L2ComponentName::isDecoder(const std::string& name) {
+    ALOG_ASSERT(isValid(name));
+    static const std::set<std::string> kValidDecoders = {
+            kH264Decoder, kH264SecureDecoder, kVP8Decoder,  kVP8SecureDecoder,
+            kVP9Decoder,  kVP9SecureDecoder,  kHEVCDecoder, kHEVCSecureDecoder,
+    };
+
+    return kValidDecoders.find(name) != kValidDecoders.end();
+}
+
+// static
+std::optional<VideoCodec> V4L2ComponentName::getCodec(const std::string& name) {
+    ALOG_ASSERT(isValid(name));
+    static const std::map<std::string, VideoCodec> kNameToCodecs = {
+            {kH264Decoder, VideoCodec::H264}, {kH264SecureDecoder, VideoCodec::H264},
+            {kH264Encoder, VideoCodec::H264},
+
+            {kVP8Decoder, VideoCodec::VP8},   {kVP8SecureDecoder, VideoCodec::VP8},
+            {kVP8Encoder, VideoCodec::VP8},
+
+            {kVP9Decoder, VideoCodec::VP9},   {kVP9SecureDecoder, VideoCodec::VP9},
+            {kVP9Encoder, VideoCodec::VP9},
+
+            {kHEVCDecoder, VideoCodec::HEVC}, {kHEVCSecureDecoder, VideoCodec::HEVC},
+    };
+
+    auto iter = kNameToCodecs.find(name);
+    if (iter == kNameToCodecs.end()) {
+        return std::nullopt;
+    }
+    return iter->second;
 }
 
 }  // namespace android

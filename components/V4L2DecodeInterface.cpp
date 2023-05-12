@@ -15,8 +15,6 @@
 
 #include <v4l2_codec2/common/Common.h>
 #include <v4l2_codec2/common/V4L2ComponentCommon.h>
-#include <v4l2_codec2/common/V4L2Device.h>
-#include <v4l2_codec2/components/V4L2Decoder.h>
 #include <v4l2_codec2/plugin_store/V4L2AllocatorId.h>
 
 namespace android {
@@ -28,20 +26,6 @@ constexpr size_t k4KArea = 3840 * 2160;
 constexpr size_t kInputBufferSizeFor1080p = 1024 * 1024;  // 1MB
 // Input bitstream buffer size for up to 4k streams.
 constexpr size_t kInputBufferSizeFor4K = 4 * kInputBufferSizeFor1080p;
-
-std::optional<VideoCodec> getCodecFromComponentName(const std::string& name) {
-    if (name == V4L2ComponentName::kH264Decoder || name == V4L2ComponentName::kH264SecureDecoder)
-        return VideoCodec::H264;
-    if (name == V4L2ComponentName::kVP8Decoder || name == V4L2ComponentName::kVP8SecureDecoder)
-        return VideoCodec::VP8;
-    if (name == V4L2ComponentName::kVP9Decoder || name == V4L2ComponentName::kVP9SecureDecoder)
-        return VideoCodec::VP9;
-    if (name == V4L2ComponentName::kHEVCDecoder || name == V4L2ComponentName::kHEVCSecureDecoder)
-        return VideoCodec::HEVC;
-
-    ALOGE("Unknown name: %s", name.c_str());
-    return std::nullopt;
-}
 
 size_t calculateInputBufferSize(size_t area) {
     if (area > k4KArea) {
@@ -113,18 +97,12 @@ C2R V4L2DecodeInterface::MaxInputBufferSizeCalculator(
 }
 
 V4L2DecodeInterface::V4L2DecodeInterface(const std::string& name,
-                                         const std::shared_ptr<C2ReflectorHelper>& helper)
-      : C2InterfaceHelper(helper), mInitStatus(C2_OK) {
+                                         const std::shared_ptr<C2ReflectorHelper>& helper,
+                                         const SupportedCapabilities& caps)
+      : C2InterfaceHelper(helper), mInitStatus(C2_OK), mVideoCodec(caps.codec) {
     ALOGV("%s(%s)", __func__, name.c_str());
 
     setDerivedInstance(this);
-
-    mVideoCodec = getCodecFromComponentName(name);
-    if (!mVideoCodec) {
-        ALOGE("Invalid component name: %s", name.c_str());
-        mInitStatus = C2_BAD_VALUE;
-        return;
-    }
 
     addParameter(DefineParam(mKind, C2_PARAMKEY_COMPONENT_KIND)
                          .withConstValue(new C2ComponentKindSetting(C2Component::KIND_DECODER))
@@ -135,9 +113,7 @@ V4L2DecodeInterface::V4L2DecodeInterface(const std::string& name,
     ui::Size maxSize(1, 1);
 
     std::vector<uint32_t> profiles;
-    V4L2Device::SupportedProfiles supportedProfiles = V4L2Device::getSupportedProfiles(
-            V4L2Device::Type::kDecoder, {V4L2Device::videoCodecToPixFmt(*mVideoCodec)});
-    for (const auto& supportedProfile : supportedProfiles) {
+    for (const auto& supportedProfile : caps.supportedProfiles) {
         if (isValidProfileForCodec(mVideoCodec.value(), supportedProfile.profile)) {
             profiles.push_back(static_cast<uint32_t>(supportedProfile.profile));
             maxSize.setWidth(std::max(maxSize.width, supportedProfile.max_resolution.width));
@@ -171,13 +147,12 @@ V4L2DecodeInterface::V4L2DecodeInterface(const std::string& name,
         }
     }
 
-    uint32_t defaultProfile = V4L2Device::getDefaultProfile(*mVideoCodec);
+    uint32_t defaultProfile = caps.defaultProfile;
     if (defaultProfile == C2Config::PROFILE_UNUSED)
         defaultProfile = *std::min_element(profiles.begin(), profiles.end());
 
     std::vector<unsigned int> levels;
-    std::vector<C2Config::level_t> supportedLevels =
-            V4L2Device::getSupportedDecodeLevels(*mVideoCodec);
+    std::vector<C2Config::level_t> supportedLevels = caps.supportedLevels;
     for (const auto& supportedLevel : supportedLevels) {
         levels.push_back(static_cast<unsigned int>(supportedLevel));
     }
@@ -213,7 +188,7 @@ V4L2DecodeInterface::V4L2DecodeInterface(const std::string& name,
         }
     }
 
-    uint32_t defaultLevel = V4L2Device::getDefaultLevel(*mVideoCodec);
+    uint32_t defaultLevel = caps.defaultLevel;
     if (defaultLevel == C2Config::LEVEL_UNUSED)
         defaultLevel = *std::min_element(levels.begin(), levels.end());
 

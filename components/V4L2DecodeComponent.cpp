@@ -157,7 +157,7 @@ std::atomic<uint32_t> V4L2DecodeComponent::sNextDebugStreamId = 0;
 
 // static
 std::shared_ptr<C2Component> V4L2DecodeComponent::create(
-        const std::string& name, c2_node_id_t id, const std::shared_ptr<C2ReflectorHelper>& helper,
+        const std::string& name, c2_node_id_t id, std::shared_ptr<V4L2DecodeInterface> intfImpl,
         C2ComponentFactory::ComponentDeleter deleter) {
     static const int32_t kMaxConcurrentInstances =
             property_get_int32("ro.vendor.v4l2_codec2.decode_concurrent_instances", -1);
@@ -172,21 +172,14 @@ std::shared_ptr<C2Component> V4L2DecodeComponent::create(
         sNextDebugStreamId.store(0, std::memory_order_relaxed);
     }
 
-    auto intfImpl = std::make_shared<V4L2DecodeInterface>(name, helper);
-    if (intfImpl->status() != C2_OK) {
-        ALOGE("Failed to initialize V4L2DecodeInterface.");
-        return nullptr;
-    }
-
     uint32_t debugStreamId = sNextDebugStreamId.fetch_add(1, std::memory_order_relaxed);
     return std::shared_ptr<C2Component>(
-            new V4L2DecodeComponent(debugStreamId, name, id, helper, intfImpl), deleter);
+            new V4L2DecodeComponent(debugStreamId, name, id, std::move(intfImpl)), deleter);
 }
 
 V4L2DecodeComponent::V4L2DecodeComponent(uint32_t debugStreamId, const std::string& name,
                                          c2_node_id_t id,
-                                         const std::shared_ptr<C2ReflectorHelper>& helper,
-                                         const std::shared_ptr<V4L2DecodeInterface>& intfImpl)
+                                         std::shared_ptr<V4L2DecodeInterface> intfImpl)
       : mDebugStreamId(debugStreamId),
         mIntfImpl(intfImpl),
         mIntf(std::make_shared<SimpleInterface<V4L2DecodeInterface>>(name.c_str(), id, mIntfImpl)) {
