@@ -3,7 +3,11 @@
 // found in the LICENSE file.
 
 //#define LOG_NDEBUG 0
+#ifdef V4L2_CODEC2_SERVICE_V4L2_STORE
 #define LOG_TAG "android.hardware.media.c2@1.0-service-v4l2"
+#else
+#error "V4L2_CODEC2_SERVICE_V4L2_STORE has to be defined"
+#endif
 
 #include <C2Component.h>
 #include <base/logging.h>
@@ -12,7 +16,9 @@
 #include <log/log.h>
 #include <minijail.h>
 
+#ifdef V4L2_CODEC2_SERVICE_V4L2_STORE
 #include <v4l2_codec2/v4l2/V4L2ComponentStore.h>
+#endif
 
 // Default policy for codec2.0 service.
 static constexpr char kBaseSeccompPolicyPath[] =
@@ -40,12 +46,15 @@ int main(int /* argc */, char** /* argv */) {
     // Create IComponentStore service.
     {
         using namespace ::android::hardware::media::c2::V1_2;
+        android::sp<IComponentStore> store = nullptr;
 
+#ifdef V4L2_CODEC2_SERVICE_V4L2_STORE
         ALOGD("Instantiating Codec2's V4L2 IComponentStore service...");
-        android::sp<IComponentStore> store(
-                new utils::ComponentStore(android::V4L2ComponentStore::Create()));
+        store = new utils::ComponentStore(android::V4L2ComponentStore::Create());
+#endif
+
         if (store == nullptr) {
-            ALOGE("Cannot create Codec2's V4L2 IComponentStore service.");
+            ALOGE("Cannot create Codec2's IComponentStore service.");
         } else if (store->registerAsService("default") != android::OK) {
             ALOGE("Cannot register Codec2's IComponentStore service.");
         } else {
