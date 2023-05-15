@@ -1,9 +1,9 @@
-// Copyright 2020 The Chromium Authors. All rights reserved.
+// Copyright 2023 The Chromium Authors. All rights reserved.
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#ifndef ANDROID_V4L2_CODEC2_COMPONENTS_V4L2_ENCODE_INTERFACE_H
-#define ANDROID_V4L2_CODEC2_COMPONENTS_V4L2_ENCODE_INTERFACE_H
+#ifndef ANDROID_V4L2_CODEC2_COMPONENTS_ENCODE_INTERFACE_H
+#define ANDROID_V4L2_CODEC2_COMPONENTS_ENCODE_INTERFACE_H
 
 #include <optional>
 #include <vector>
@@ -25,10 +25,10 @@ namespace android {
 
 // Codec 2.0 interface describing the V4L2EncodeComponent. This interface is used by the codec 2.0
 // framework to query the component's capabilities and request configuration changes.
-class V4L2EncodeInterface : public C2InterfaceHelper {
+class EncodeInterface : public C2InterfaceHelper {
 public:
-    V4L2EncodeInterface(const C2String& name, std::shared_ptr<C2ReflectorHelper> helper,
-                        const SupportedCapabilities& caps);
+    EncodeInterface(const C2String& name, std::shared_ptr<C2ReflectorHelper> helper,
+                    const SupportedCapabilities& caps);
 
     // Interfaces for the V4L2EncodeInterface
     // Note: these getters are not thread-safe. For dynamic parameters, component should use
@@ -127,4 +127,4 @@ protected:
 
 }  // namespace android
 
-#endif  // ANDROID_V4L2_CODEC2_COMPONENTS_V4L2_ENCODE_INTERFACE_H
+#endif  // ANDROID_V4L2_CODEC2_COMPONENTS_ENCODE_INTERFACE_H

@@ -1,11 +1,11 @@
-// Copyright 2020 The Chromium Authors. All rights reserved.
+// Copyright 2023 The Chromium Authors. All rights reserved.
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 //#define LOG_NDEBUG 0
 #define LOG_TAG "V4L2EncodeInterface"
 
-#include <v4l2_codec2/components/V4L2EncodeInterface.h>
+#include <v4l2_codec2/components/EncodeInterface.h>
 
 #include <inttypes.h>
 #include <algorithm>
@@ -44,14 +44,14 @@ constexpr uint32_t kMaxBitrate = 50000000;
 }  // namespace
 
 //static
-C2Config::level_t V4L2EncodeInterface::lowestConfigLevel = C2Config::LEVEL_UNUSED;
+C2Config::level_t EncodeInterface::lowestConfigLevel = C2Config::LEVEL_UNUSED;
 
 // static
-C2R V4L2EncodeInterface::H264ProfileLevelSetter(
-        bool /*mayBlock*/, C2P<C2StreamProfileLevelInfo::output>& info,
-        const C2P<C2StreamPictureSizeInfo::input>& videoSize,
-        const C2P<C2StreamFrameRateInfo::output>& frameRate,
-        const C2P<C2StreamBitrateInfo::output>& bitrate) {
+C2R EncodeInterface::H264ProfileLevelSetter(bool /*mayBlock*/,
+                                            C2P<C2StreamProfileLevelInfo::output>& info,
+                                            const C2P<C2StreamPictureSizeInfo::input>& videoSize,
+                                            const C2P<C2StreamFrameRateInfo::output>& frameRate,
+                                            const C2P<C2StreamBitrateInfo::output>& bitrate) {
     // Adopt default minimal profile instead if the requested profile is not supported, or lower
     // than the default minimal one.
     constexpr C2Config::profile_t minProfile = C2Config::PROFILE_AVC_BASELINE;
@@ -161,11 +161,11 @@ C2R V4L2EncodeInterface::H264ProfileLevelSetter(
     return C2R::Ok();
 }
 
-C2R V4L2EncodeInterface::VP9ProfileLevelSetter(
-        bool /*mayBlock*/, C2P<C2StreamProfileLevelInfo::output>& info,
-        const C2P<C2StreamPictureSizeInfo::input>& /*videoSize*/,
-        const C2P<C2StreamFrameRateInfo::output>& /*frameRate*/,
-        const C2P<C2StreamBitrateInfo::output>& /*bitrate*/) {
+C2R EncodeInterface::VP9ProfileLevelSetter(bool /*mayBlock*/,
+                                           C2P<C2StreamProfileLevelInfo::output>& info,
+                                           const C2P<C2StreamPictureSizeInfo::input>& /*videoSize*/,
+                                           const C2P<C2StreamFrameRateInfo::output>& /*frameRate*/,
+                                           const C2P<C2StreamBitrateInfo::output>& /*bitrate*/) {
     // Adopt default minimal profile instead if the requested profile is not supported, or lower
     // than the default minimal one.
     constexpr C2Config::profile_t defaultMinProfile = C2Config::PROFILE_VP9_0;
@@ -185,7 +185,7 @@ C2R V4L2EncodeInterface::VP9ProfileLevelSetter(
 }
 
 // static
-C2R V4L2EncodeInterface::SizeSetter(bool mayBlock, C2P<C2StreamPictureSizeInfo::input>& videoSize) {
+C2R EncodeInterface::SizeSetter(bool mayBlock, C2P<C2StreamPictureSizeInfo::input>& videoSize) {
     (void)mayBlock;
     // TODO: maybe apply block limit?
     return videoSize.F(videoSize.v.width)
@@ -194,8 +194,8 @@ C2R V4L2EncodeInterface::SizeSetter(bool mayBlock, C2P<C2StreamPictureSizeInfo::
 }
 
 // static
-C2R V4L2EncodeInterface::IntraRefreshPeriodSetter(bool mayBlock,
-                                                  C2P<C2StreamIntraRefreshTuning::output>& period) {
+C2R EncodeInterface::IntraRefreshPeriodSetter(bool mayBlock,
+                                              C2P<C2StreamIntraRefreshTuning::output>& period) {
     (void)mayBlock;
     if (period.v.period < 1) {
         period.set().mode = C2Config::INTRA_REFRESH_DISABLED;
@@ -207,9 +207,8 @@ C2R V4L2EncodeInterface::IntraRefreshPeriodSetter(bool mayBlock,
     return C2R::Ok();
 }
 
-V4L2EncodeInterface::V4L2EncodeInterface(const C2String& name,
-                                         std::shared_ptr<C2ReflectorHelper> helper,
-                                         const SupportedCapabilities& caps)
+EncodeInterface::EncodeInterface(const C2String& name, std::shared_ptr<C2ReflectorHelper> helper,
+                                 const SupportedCapabilities& caps)
       : C2InterfaceHelper(std::move(helper)) {
     ALOGV("%s(%s)", __func__, name.c_str());
 
@@ -218,7 +217,7 @@ V4L2EncodeInterface::V4L2EncodeInterface(const C2String& name,
     Initialize(name, caps);
 }
 
-void V4L2EncodeInterface::Initialize(const C2String& name, const SupportedCapabilities& caps) {
+void EncodeInterface::Initialize(const C2String& name, const SupportedCapabilities& caps) {
     // Note: unsigned int is used here, since std::vector<C2Config::profile_t> cannot convert to
     // std::vector<unsigned int> required by the c2 framework below.
     std::vector<unsigned int> profiles;
@@ -411,7 +410,7 @@ void V4L2EncodeInterface::Initialize(const C2String& name, const SupportedCapabi
     mInitStatus = C2_OK;
 }
 
-uint32_t V4L2EncodeInterface::getKeyFramePeriod() const {
+uint32_t EncodeInterface::getKeyFramePeriod() const {
     if (mKeyFramePeriodUs->value < 0 || mKeyFramePeriodUs->value == INT64_MAX) {
         return 0;
     }

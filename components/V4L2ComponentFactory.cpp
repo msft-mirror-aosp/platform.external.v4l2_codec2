@@ -14,9 +14,9 @@
 #include <v4l2_codec2/common/V4L2ComponentCommon.h>
 #include <v4l2_codec2/common/V4L2Device.h>
 #include <v4l2_codec2/components/DecodeInterface.h>
+#include <v4l2_codec2/components/EncodeInterface.h>
 #include <v4l2_codec2/components/V4L2DecodeComponent.h>
 #include <v4l2_codec2/components/V4L2EncodeComponent.h>
-#include <v4l2_codec2/components/V4L2EncodeInterface.h>
 
 namespace android {
 
@@ -71,7 +71,7 @@ c2_status_t V4L2ComponentFactory::createComponent(c2_node_id_t id,
     }
 
     if (mIsEncoder) {
-        std::shared_ptr<V4L2EncodeInterface> intfImpl;
+        std::shared_ptr<EncodeInterface> intfImpl;
         c2_status_t status = createEncodeInterface(&intfImpl);
         if (status != C2_OK) {
             return status;
@@ -101,15 +101,15 @@ c2_status_t V4L2ComponentFactory::createInterface(
     }
 
     if (mIsEncoder) {
-        std::shared_ptr<V4L2EncodeInterface> intfImpl;
+        std::shared_ptr<EncodeInterface> intfImpl;
         c2_status_t status = createEncodeInterface(&intfImpl);
         if (status != C2_OK) {
             return status;
         }
 
         *interface = std::shared_ptr<C2ComponentInterface>(
-                new SimpleInterface<V4L2EncodeInterface>(mComponentName.c_str(), id,
-                                                         std::move(intfImpl)),
+                new SimpleInterface<EncodeInterface>(mComponentName.c_str(), id,
+                                                     std::move(intfImpl)),
                 deleter);
         return C2_OK;
     } else {
@@ -128,7 +128,7 @@ c2_status_t V4L2ComponentFactory::createInterface(
 }
 
 c2_status_t V4L2ComponentFactory::createEncodeInterface(
-        std::shared_ptr<V4L2EncodeInterface>* intfImpl) {
+        std::shared_ptr<EncodeInterface>* intfImpl) {
     if (!mCapabilites) {
         auto codec = V4L2ComponentName::getCodec(mComponentName);
         if (!codec) {
@@ -138,7 +138,7 @@ c2_status_t V4L2ComponentFactory::createEncodeInterface(
                 V4L2Device::queryEncodingCapabilities(*codec));
     }
 
-    *intfImpl = std::make_shared<V4L2EncodeInterface>(mComponentName, mReflector, *mCapabilites);
+    *intfImpl = std::make_shared<EncodeInterface>(mComponentName, mReflector, *mCapabilites);
     if (*intfImpl == nullptr) {
         return C2_NO_MEMORY;
     }

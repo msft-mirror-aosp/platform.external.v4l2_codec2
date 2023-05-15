@@ -26,8 +26,6 @@ namespace android {
 
 namespace {
 
-const VideoPixelFormat kInputPixelFormat = VideoPixelFormat::NV12;
-
 // The maximum size for output buffer, which is chosen empirically for a 1080p video.
 constexpr size_t kMaxBitstreamBufferSizeInBytes = 2 * 1024 * 1024;  // 2MB
 // The frame size for 1080p (FHD) video in pixels.

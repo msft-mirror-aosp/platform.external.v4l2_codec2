@@ -27,10 +27,6 @@ class V4L2Queue;
 
 class V4L2Encoder : public VideoEncoder {
 public:
-    // Number of buffers on V4L2 device queues.
-    static constexpr size_t kInputBufferCount = 2;
-    static constexpr size_t kOutputBufferCount = 2;
-
     static std::unique_ptr<VideoEncoder> create(
             C2Config::profile_t profile, std::optional<uint8_t> level, const ui::Size& visibleSize,
             uint32_t stride, uint32_t keyFramePeriod, C2Config::bitrate_mode_t bitrateMode,
