@@ -1,11 +1,11 @@
-// Copyright 2020 The Chromium Authors. All rights reserved.
+// Copyright 2023 The Chromium Authors. All rights reserved.
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 //#define LOG_NDEBUG 0
-#define LOG_TAG "V4L2DecodeInterface"
+#define LOG_TAG "DecodeInterface"
 
-#include <v4l2_codec2/components/V4L2DecodeInterface.h>
+#include <v4l2_codec2/components/DecodeInterface.h>
 
 #include <C2PlatformSupport.h>
 #include <SimpleC2Interface.h>
@@ -40,16 +40,16 @@ size_t calculateInputBufferSize(size_t area) {
 }  // namespace
 
 // static
-C2R V4L2DecodeInterface::ProfileLevelSetter(bool /* mayBlock */,
-                                            C2P<C2StreamProfileLevelInfo::input>& info) {
+C2R DecodeInterface::ProfileLevelSetter(bool /* mayBlock */,
+                                        C2P<C2StreamProfileLevelInfo::input>& info) {
     return info.F(info.v.profile)
             .validatePossible(info.v.profile)
             .plus(info.F(info.v.level).validatePossible(info.v.level));
 }
 
 // static
-C2R V4L2DecodeInterface::SizeSetter(bool /* mayBlock */,
-                                    C2P<C2StreamPictureSizeInfo::output>& videoSize) {
+C2R DecodeInterface::SizeSetter(bool /* mayBlock */,
+                                C2P<C2StreamPictureSizeInfo::output>& videoSize) {
     return videoSize.F(videoSize.v.width)
             .validatePossible(videoSize.v.width)
             .plus(videoSize.F(videoSize.v.height).validatePossible(videoSize.v.height));
@@ -57,7 +57,7 @@ C2R V4L2DecodeInterface::SizeSetter(bool /* mayBlock */,
 
 // static
 template <typename T>
-C2R V4L2DecodeInterface::DefaultColorAspectsSetter(bool /* mayBlock */, C2P<T>& def) {
+C2R DecodeInterface::DefaultColorAspectsSetter(bool /* mayBlock */, C2P<T>& def) {
     if (def.v.range > C2Color::RANGE_OTHER) {
         def.set().range = C2Color::RANGE_OTHER;
     }
@@ -74,10 +74,10 @@ C2R V4L2DecodeInterface::DefaultColorAspectsSetter(bool /* mayBlock */, C2P<T>& 
 }
 
 // static
-C2R V4L2DecodeInterface::MergedColorAspectsSetter(
-        bool /* mayBlock */, C2P<C2StreamColorAspectsInfo::output>& merged,
-        const C2P<C2StreamColorAspectsTuning::output>& def,
-        const C2P<C2StreamColorAspectsInfo::input>& coded) {
+C2R DecodeInterface::MergedColorAspectsSetter(bool /* mayBlock */,
+                                              C2P<C2StreamColorAspectsInfo::output>& merged,
+                                              const C2P<C2StreamColorAspectsTuning::output>& def,
+                                              const C2P<C2StreamColorAspectsInfo::input>& coded) {
     // Take coded values for all specified fields, and default values for unspecified ones.
     merged.set().range = coded.v.range == RANGE_UNSPECIFIED ? def.v.range : coded.v.range;
     merged.set().primaries =
@@ -89,16 +89,16 @@ C2R V4L2DecodeInterface::MergedColorAspectsSetter(
 }
 
 // static
-C2R V4L2DecodeInterface::MaxInputBufferSizeCalculator(
+C2R DecodeInterface::MaxInputBufferSizeCalculator(
         bool /* mayBlock */, C2P<C2StreamMaxBufferSizeInfo::input>& me,
         const C2P<C2StreamPictureSizeInfo::output>& size) {
     me.set().value = calculateInputBufferSize(size.v.width * size.v.height);
     return C2R::Ok();
 }
 
-V4L2DecodeInterface::V4L2DecodeInterface(const std::string& name,
-                                         const std::shared_ptr<C2ReflectorHelper>& helper,
-                                         const SupportedCapabilities& caps)
+DecodeInterface::DecodeInterface(const std::string& name,
+                                 const std::shared_ptr<C2ReflectorHelper>& helper,
+                                 const SupportedCapabilities& caps)
       : C2InterfaceHelper(helper), mInitStatus(C2_OK), mVideoCodec(caps.codec) {
     ALOGV("%s(%s)", __func__, name.c_str());
 
@@ -395,11 +395,11 @@ V4L2DecodeInterface::V4L2DecodeInterface(const std::string& name,
     }
 }
 
-size_t V4L2DecodeInterface::getInputBufferSize() const {
+size_t DecodeInterface::getInputBufferSize() const {
     return calculateInputBufferSize(mSize->width * mSize->height);
 }
 
-c2_status_t V4L2DecodeInterface::queryColorAspects(
+c2_status_t DecodeInterface::queryColorAspects(
         std::shared_ptr<C2StreamColorAspectsInfo::output>* targetColorAspects) {
     std::unique_ptr<C2StreamColorAspectsInfo::output> colorAspects =
             std::make_unique<C2StreamColorAspectsInfo::output>(
@@ -412,7 +412,7 @@ c2_status_t V4L2DecodeInterface::queryColorAspects(
     return status;
 }
 
-uint32_t V4L2DecodeInterface::getOutputDelay(VideoCodec codec) {
+uint32_t DecodeInterface::getOutputDelay(VideoCodec codec) {
     switch (codec) {
     case VideoCodec::H264:
         // Due to frame reordering an H264 decoder might need multiple additional input frames to be

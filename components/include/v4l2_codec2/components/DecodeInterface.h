@@ -1,9 +1,9 @@
-// Copyright 2020 The Chromium Authors. All rights reserved.
+// Copyright 2023 The Chromium Authors. All rights reserved.
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#ifndef ANDROID_V4L2_CODEC2_COMPONENTS_V4L2_DECODE_INTERFACE_H
-#define ANDROID_V4L2_CODEC2_COMPONENTS_V4L2_DECODE_INTERFACE_H
+#ifndef ANDROID_V4L2_CODEC2_COMPONENTS_DECODE_INTERFACE_H
+#define ANDROID_V4L2_CODEC2_COMPONENTS_DECODE_INTERFACE_H
 
 #include <memory>
 #include <string>
@@ -17,13 +17,13 @@
 
 namespace android {
 
-class V4L2DecodeInterface : public C2InterfaceHelper {
+class DecodeInterface : public C2InterfaceHelper {
 public:
-    V4L2DecodeInterface(const std::string& name, const std::shared_ptr<C2ReflectorHelper>& helper,
-                        const SupportedCapabilities& caps);
-    V4L2DecodeInterface(const V4L2DecodeInterface&) = delete;
-    V4L2DecodeInterface& operator=(const V4L2DecodeInterface&) = delete;
-    ~V4L2DecodeInterface() = default;
+    DecodeInterface(const std::string& name, const std::shared_ptr<C2ReflectorHelper>& helper,
+                    const SupportedCapabilities& caps);
+    DecodeInterface(const DecodeInterface&) = delete;
+    DecodeInterface& operator=(const DecodeInterface&) = delete;
+    ~DecodeInterface() = default;
 
     // interfaces for the client component.
     c2_status_t status() const { return mInitStatus; }
@@ -105,4 +105,4 @@ private:
 
 }  // namespace android
 
-#endif  // ANDROID_V4L2_CODEC2_COMPONENTS_V4L2_DECODE_INTERFACE_H
+#endif  // ANDROID_V4L2_CODEC2_COMPONENTS_DECODE_INTERFACE_H

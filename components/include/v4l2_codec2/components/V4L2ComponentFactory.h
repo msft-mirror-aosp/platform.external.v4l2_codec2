@@ -15,7 +15,7 @@
 namespace android {
 
 struct SupportedCapabilities;
-class V4L2DecodeInterface;
+class DecodeInterface;
 class V4L2EncodeInterface;
 
 class V4L2ComponentFactory : public C2ComponentFactory {
@@ -35,7 +35,7 @@ public:
 
 private:
     c2_status_t createEncodeInterface(std::shared_ptr<V4L2EncodeInterface>* intfImpl);
-    c2_status_t createDecodeInterface(std::shared_ptr<V4L2DecodeInterface>* intfImpl);
+    c2_status_t createDecodeInterface(std::shared_ptr<DecodeInterface>* intfImpl);
 
     const std::string mComponentName;
     const bool mIsEncoder;

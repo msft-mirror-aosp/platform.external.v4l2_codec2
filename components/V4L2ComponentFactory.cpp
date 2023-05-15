@@ -13,8 +13,8 @@
 #include <v4l2_codec2/common/Common.h>
 #include <v4l2_codec2/common/V4L2ComponentCommon.h>
 #include <v4l2_codec2/common/V4L2Device.h>
+#include <v4l2_codec2/components/DecodeInterface.h>
 #include <v4l2_codec2/components/V4L2DecodeComponent.h>
-#include <v4l2_codec2/components/V4L2DecodeInterface.h>
 #include <v4l2_codec2/components/V4L2EncodeComponent.h>
 #include <v4l2_codec2/components/V4L2EncodeInterface.h>
 
@@ -54,7 +54,7 @@ V4L2ComponentFactory::V4L2ComponentFactory(const std::string& componentName, boo
     constexpr nsecs_t kMinFrameIntervalNs = 1000000000ull / 60;
     uint32_t delayCount = 0;
     for (auto c : kAllCodecs) {
-        delayCount = std::max(delayCount, V4L2DecodeInterface::getOutputDelay(c));
+        delayCount = std::max(delayCount, DecodeInterface::getOutputDelay(c));
     }
     utils::InputBufferManager::setNotificationInterval(delayCount * kMinFrameIntervalNs / 2);
 }
@@ -79,7 +79,7 @@ c2_status_t V4L2ComponentFactory::createComponent(c2_node_id_t id,
 
         *component = V4L2EncodeComponent::create(mComponentName, id, std::move(intfImpl), deleter);
     } else {
-        std::shared_ptr<V4L2DecodeInterface> intfImpl;
+        std::shared_ptr<DecodeInterface> intfImpl;
         c2_status_t status = createDecodeInterface(&intfImpl);
         if (status != C2_OK) {
             return status;
@@ -113,15 +113,15 @@ c2_status_t V4L2ComponentFactory::createInterface(
                 deleter);
         return C2_OK;
     } else {
-        std::shared_ptr<V4L2DecodeInterface> intfImpl;
+        std::shared_ptr<DecodeInterface> intfImpl;
         c2_status_t status = createDecodeInterface(&intfImpl);
         if (status != C2_OK) {
             return status;
         }
 
         *interface = std::shared_ptr<C2ComponentInterface>(
-                new SimpleInterface<V4L2DecodeInterface>(mComponentName.c_str(), id,
-                                                         std::move(intfImpl)),
+                new SimpleInterface<DecodeInterface>(mComponentName.c_str(), id,
+                                                     std::move(intfImpl)),
                 deleter);
         return C2_OK;
     }
@@ -147,7 +147,7 @@ c2_status_t V4L2ComponentFactory::createEncodeInterface(
 }
 
 c2_status_t V4L2ComponentFactory::createDecodeInterface(
-        std::shared_ptr<V4L2DecodeInterface>* intfImpl) {
+        std::shared_ptr<DecodeInterface>* intfImpl) {
     if (!mCapabilites) {
         auto codec = V4L2ComponentName::getCodec(mComponentName);
         if (!codec) {
@@ -157,7 +157,7 @@ c2_status_t V4L2ComponentFactory::createDecodeInterface(
                 V4L2Device::queryDecodingCapabilities(*codec));
     }
 
-    *intfImpl = std::make_shared<V4L2DecodeInterface>(mComponentName, mReflector, *mCapabilites);
+    *intfImpl = std::make_shared<DecodeInterface>(mComponentName, mReflector, *mCapabilites);
     if (*intfImpl == nullptr) {
         return C2_NO_MEMORY;
     }
