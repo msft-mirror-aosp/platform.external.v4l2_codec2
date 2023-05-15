@@ -17,8 +17,7 @@
 #include <log/log.h>
 #include <media/stagefright/foundation/MediaDefs.h>
 
-#include <v4l2_codec2/common/V4L2ComponentCommon.h>
-#include <v4l2_codec2/components/V4L2ComponentFactory.h>
+#include <v4l2_codec2/common/VideoTypes.h>
 
 namespace android {
 namespace {

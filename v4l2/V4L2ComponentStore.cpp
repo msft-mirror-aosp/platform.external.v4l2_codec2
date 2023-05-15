@@ -5,7 +5,7 @@
 //#define LOG_NDEBUG 0
 #define LOG_TAG "V4L2ComponentStore"
 
-#include <v4l2_codec2/components/V4L2ComponentStore.h>
+#include <v4l2_codec2/v4l2/V4L2ComponentStore.h>
 
 #include <stdint.h>
 
@@ -17,9 +17,9 @@
 #include <log/log.h>
 #include <media/stagefright/foundation/MediaDefs.h>
 
-#include <v4l2_codec2/common/V4L2ComponentCommon.h>
 #include <v4l2_codec2/components/ComponentStore.h>
-#include <v4l2_codec2/components/V4L2ComponentFactory.h>
+#include <v4l2_codec2/v4l2/V4L2ComponentCommon.h>
+#include <v4l2_codec2/v4l2/V4L2ComponentFactory.h>
 
 namespace android {
 

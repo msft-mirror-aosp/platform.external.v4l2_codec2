@@ -10,7 +10,7 @@
 #define LOG_TAG "V4L2Device"
 
 #include <linux/v4l2-controls.h>
-#include <v4l2_codec2/common/V4L2Device.h>
+#include <v4l2_codec2/v4l2/V4L2Device.h>
 
 #include <fcntl.h>
 #include <inttypes.h>
@@ -39,6 +39,30 @@
 #include <v4l2_codec2/common/VideoPixelFormat.h>
 
 namespace android {
+
+bool isValidPixFmtForCodec(VideoCodec codec, uint32_t pixFmt) {
+    switch (pixFmt) {
+    case V4L2_PIX_FMT_H264:
+    case V4L2_PIX_FMT_H264_SLICE:
+        return codec == VideoCodec::H264;
+        break;
+    case V4L2_PIX_FMT_VP8:
+    case V4L2_PIX_FMT_VP8_FRAME:
+        return codec == VideoCodec::VP8;
+        break;
+    case V4L2_PIX_FMT_VP9:
+    case V4L2_PIX_FMT_VP9_FRAME:
+        return codec == VideoCodec::VP9;
+        break;
+    case V4L2_PIX_FMT_HEVC:
+    case V4L2_PIX_FMT_HEVC_SLICE:
+        return codec == VideoCodec::HEVC;
+        break;
+    default:
+        ALOGE("Unhandled pixelformat %s", fourccToString(pixFmt).c_str());
+        return false;
+    }
+}
 
 struct v4l2_format buildV4L2Format(const enum v4l2_buf_type type, uint32_t fourcc,
                                    const ui::Size& size, size_t buffer_size, uint32_t stride) {

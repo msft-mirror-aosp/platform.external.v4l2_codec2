@@ -5,7 +5,7 @@
 //#define LOG_NDEBUG 0
 #define LOG_TAG "V4L2ComponentCommon"
 
-#include <v4l2_codec2/common/V4L2ComponentCommon.h>
+#include <v4l2_codec2/v4l2/V4L2ComponentCommon.h>
 
 #include <log/log.h>
 #include <set>

@@ -6,8 +6,8 @@
 // delegate/pass the device specific handling of any of the functionalities.
 // Note: ported from Chromium commit head: 2f13d62f0c0d, but some parts have been removed.
 
-#ifndef ANDROID_V4L2_CODEC2_COMMON_V4L2_DEVICE_H
-#define ANDROID_V4L2_CODEC2_COMMON_V4L2_DEVICE_H
+#ifndef ANDROID_V4L2_CODEC2_V4L2_V4L2_DEVICE_H
+#define ANDROID_V4L2_CODEC2_V4L2_V4L2_DEVICE_H
 
 #include <linux/videodev2.h>
 #include <stddef.h>
@@ -24,8 +24,8 @@
 
 #include <ui/Size.h>
 #include <v4l2_codec2/common/Common.h>
-#include <v4l2_codec2/common/V4L2DevicePoller.h>
 #include <v4l2_codec2/common/VideoTypes.h>
+#include <v4l2_codec2/v4l2/V4L2DevicePoller.h>
 
 // VP8 parsed frames
 #ifndef V4L2_PIX_FMT_VP8_FRAME
@@ -60,6 +60,8 @@ struct V4L2ExtCtrl {
     V4L2ExtCtrl(uint32_t id, int32_t val);
     struct v4l2_ext_control ctrl;
 };
+
+bool isValidPixFmtForCodec(VideoCodec codec, uint32_t pixFmt);
 
 // A unique reference to a buffer for clients to prepare and submit.
 //
@@ -545,4 +547,4 @@ private:
 
 }  // namespace android
 
-#endif  // ANDROID_V4L2_CODEC2_COMMON_V4L2_DEVICE_H
+#endif  // ANDROID_V4L2_CODEC2_V4L2_V4L2_DEVICE_H

@@ -2,8 +2,8 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#ifndef ANDROID_V4L2_CODEC2_COMPONENTS_V4L2_COMPONENT_STORE_H
-#define ANDROID_V4L2_CODEC2_COMPONENTS_V4L2_COMPONENT_STORE_H
+#ifndef ANDROID_V4L2_CODEC2_V4L2_V4L2_COMPONENT_STORE_H
+#define ANDROID_V4L2_CODEC2_V4L2_V4L2_COMPONENT_STORE_H
 
 #include <C2Component.h>
 
@@ -15,4 +15,4 @@ struct V4L2ComponentStore {
 
 }  // namespace android
 
-#endif  // ANDROID_V4L2_CODEC2_COMPONENTS_V4L2_COMPONENT_STORE_H
+#endif  // ANDROID_V4L2_CODEC2_V4L2_V4L2_COMPONENT_STORE_H

@@ -6,7 +6,7 @@
 //#define LOG_NDEBUG 0
 #define LOG_TAG "V4L2DevicePoller"
 
-#include <v4l2_codec2/common/V4L2DevicePoller.h>
+#include <v4l2_codec2/v4l2/V4L2DevicePoller.h>
 
 #include <string>
 
@@ -15,7 +15,7 @@
 #include <base/threading/thread_checker.h>
 #include <log/log.h>
 
-#include <v4l2_codec2/common/V4L2Device.h>
+#include <v4l2_codec2/v4l2/V4L2Device.h>
 
 namespace android {
 

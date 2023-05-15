@@ -2,8 +2,8 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#ifndef ANDROID_V4L2_CODEC2_COMMON_V4L2_COMPONENT_COMMON_H
-#define ANDROID_V4L2_CODEC2_COMMON_V4L2_COMPONENT_COMMON_H
+#ifndef ANDROID_V4L2_CODEC2_V4L2_V4L2_COMPONENT_COMMON_H
+#define ANDROID_V4L2_CODEC2_V4L2_V4L2_COMPONENT_COMMON_H
 
 #include <v4l2_codec2/common/VideoTypes.h>
 #include <optional>
@@ -43,4 +43,4 @@ struct V4L2ComponentName {
 
 }  // namespace android
 
-#endif  // ANDROID_V4L2_CODEC2_COMMON_V4L2_COMPONENT_COMMON_H
+#endif  // ANDROID_V4L2_CODEC2_V4L2_V4L2_COMPONENT_COMMON_H

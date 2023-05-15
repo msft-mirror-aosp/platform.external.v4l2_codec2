@@ -12,7 +12,7 @@
 #include <log/log.h>
 #include <minijail.h>
 
-#include <v4l2_codec2/components/V4L2ComponentStore.h>
+#include <v4l2_codec2/v4l2/V4L2ComponentStore.h>
 
 // Default policy for codec2.0 service.
 static constexpr char kBaseSeccompPolicyPath[] =

@@ -2,8 +2,8 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#ifndef ANDROID_V4L2_CODEC2_COMPONENTS_V4L2_ENCODE_COMPONENT_H
-#define ANDROID_V4L2_CODEC2_COMPONENTS_V4L2_ENCODE_COMPONENT_H
+#ifndef ANDROID_V4L2_CODEC2_V4L2_V4L2_ENCODE_COMPONENT_H
+#define ANDROID_V4L2_CODEC2_V4L2_V4L2_ENCODE_COMPONENT_H
 
 #include <v4l2_codec2/components/EncodeComponent.h>
 
@@ -30,4 +30,4 @@ private:
 
 }  // namespace android
 
-#endif  // ANDROID_V4L2_CODEC2_COMPONENTS_V4L2_ENCODE_COMPONENT_H
+#endif  // ANDROID_V4L2_CODEC2_V4L2_V4L2_ENCODE_COMPONENT_H

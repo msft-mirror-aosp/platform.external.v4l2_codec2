@@ -14,7 +14,6 @@
 #include <media/stagefright/foundation/MediaDefs.h>
 
 #include <v4l2_codec2/common/Common.h>
-#include <v4l2_codec2/common/V4L2ComponentCommon.h>
 #include <v4l2_codec2/plugin_store/V4L2AllocatorId.h>
 
 namespace android {

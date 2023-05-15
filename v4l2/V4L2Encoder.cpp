@@ -5,7 +5,7 @@
 //#define LOG_NDEBUG 0
 #define LOG_TAG "V4L2Encoder"
 
-#include <v4l2_codec2/components/V4L2Encoder.h>
+#include <v4l2_codec2/v4l2/V4L2Encoder.h>
 
 #include <stdint.h>
 #include <optional>
@@ -19,8 +19,8 @@
 
 #include <v4l2_codec2/common/EncodeHelpers.h>
 #include <v4l2_codec2/common/Fourcc.h>
-#include <v4l2_codec2/common/V4L2Device.h>
 #include <v4l2_codec2/components/BitstreamBuffer.h>
+#include <v4l2_codec2/v4l2/V4L2Device.h>
 
 namespace android {
 

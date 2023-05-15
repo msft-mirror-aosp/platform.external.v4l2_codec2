@@ -6,7 +6,7 @@
 #define ATRACE_TAG ATRACE_TAG_VIDEO
 #define LOG_TAG "V4L2Decoder"
 
-#include <v4l2_codec2/components/V4L2Decoder.h>
+#include <v4l2_codec2/v4l2/V4L2Decoder.h>
 
 #include <stdint.h>
 

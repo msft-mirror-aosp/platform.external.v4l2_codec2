@@ -2,8 +2,8 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#ifndef ANDROID_V4L2_CODEC2_COMPONENTS_V4L2_DECODER_H
-#define ANDROID_V4L2_CODEC2_COMPONENTS_V4L2_DECODER_H
+#ifndef ANDROID_V4L2_CODEC2_V4L2_V4L2_DECODER_H
+#define ANDROID_V4L2_CODEC2_V4L2_V4L2_DECODER_H
 
 #include <stdint.h>
 
@@ -18,12 +18,12 @@
 #include <ui/Rect.h>
 #include <ui/Size.h>
 #include <v4l2_codec2/common/Fourcc.h>
-#include <v4l2_codec2/common/V4L2Device.h>
 #include <v4l2_codec2/common/VideoTypes.h>
 #include <v4l2_codec2/components/VideoDecoder.h>
 #include <v4l2_codec2/components/VideoFrame.h>
 #include <v4l2_codec2/components/VideoFramePool.h>
 #include <v4l2_codec2/plugin_store/DmabufHelpers.h>
+#include <v4l2_codec2/v4l2/V4L2Device.h>
 
 namespace android {
 
@@ -147,4 +147,4 @@ private:
 
 }  // namespace android
 
-#endif  // ANDROID_V4L2_CODEC2_COMPONENTS_V4L2_DECODER_H
+#endif  // ANDROID_V4L2_CODEC2_V4L2_V4L2_DECODER_H

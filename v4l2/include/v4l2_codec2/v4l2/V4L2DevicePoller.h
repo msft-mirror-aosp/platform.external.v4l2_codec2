@@ -3,8 +3,8 @@
 // found in the LICENSE file.
 // Note: ported from Chromium commit head: f65c38dcdac2
 
-#ifndef ANDROID_V4L2_CODEC2_COMMON_V4L2_DEVICE_POLLER_H
-#define ANDROID_V4L2_CODEC2_COMMON_V4L2_DEVICE_POLLER_H
+#ifndef ANDROID_V4L2_CODEC2_V4L2_V4L2_DEVICE_POLLER_H
+#define ANDROID_V4L2_CODEC2_V4L2_V4L2_DEVICE_POLLER_H
 
 #include <atomic>
 
@@ -83,4 +83,4 @@ private:
 
 }  // namespace android
 
-#endif  // ANDROID_V4L2_CODEC2_COMMON_V4L2_DEVICE_POLLER_H
+#endif  // ANDROID_V4L2_CODEC2_V4L2_V4L2_DEVICE_POLLER_H

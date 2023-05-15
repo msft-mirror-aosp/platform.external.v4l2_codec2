@@ -2,8 +2,8 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#ifndef ANDROID_V4L2_CODEC2_COMPONENTS_V4L2_COMPONENT_FACTORY_H
-#define ANDROID_V4L2_CODEC2_COMPONENTS_V4L2_COMPONENT_FACTORY_H
+#ifndef ANDROID_V4L2_CODEC2_V4L2_V4L2_COMPONENT_FACTORY_H
+#define ANDROID_V4L2_CODEC2_V4L2_V4L2_COMPONENT_FACTORY_H
 
 #include <memory>
 #include <string>
@@ -45,4 +45,4 @@ private:
 
 }  // namespace android
 
-#endif  // ANDROID_V4L2_CODEC2_COMPONENTS_V4L2_COMPONENT_FACTORY_H
+#endif  // ANDROID_V4L2_CODEC2_V4L2_V4L2_COMPONENT_FACTORY_H

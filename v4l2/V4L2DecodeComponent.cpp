@@ -5,8 +5,8 @@
 //#define LOG_NDEBUG 0
 #define LOG_TAG "V4L2DecodeComponent"
 
-#include <v4l2_codec2/components/V4L2DecodeComponent.h>
-#include <v4l2_codec2/components/V4L2Decoder.h>
+#include <v4l2_codec2/v4l2/V4L2DecodeComponent.h>
+#include <v4l2_codec2/v4l2/V4L2Decoder.h>
 
 #include <base/bind.h>
 #include <base/callback_helpers.h>

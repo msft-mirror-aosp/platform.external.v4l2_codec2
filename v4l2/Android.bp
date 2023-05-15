@@ -8,7 +8,7 @@ package {
 }
 
 cc_library {
-    name: "libv4l2_codec2_components",
+    name: "libv4l2_codec2_v4l2",
     vendor: true,
 
     defaults: [
@@ -16,15 +16,15 @@ cc_library {
     ],
 
     srcs: [
-        "VideoFrame.cpp",
-        "VideoFramePool.cpp",
-        "ComponentStore.cpp",
-        "DecodeComponent.cpp",
-        "DecodeInterface.cpp",
-        "EncodeComponent.cpp",
-        "EncodeInterface.cpp",
-        "VideoDecoder.cpp",
-        "VideoEncoder.cpp",
+        "V4L2ComponentCommon.cpp",
+        "V4L2ComponentFactory.cpp",
+        "V4L2ComponentStore.cpp",
+        "V4L2Decoder.cpp",
+        "V4L2DecodeComponent.cpp",
+        "V4L2Device.cpp",
+        "V4L2DevicePoller.cpp",
+        "V4L2Encoder.cpp",
+        "V4L2EncodeComponent.cpp",
     ],
     export_include_dirs: [
         "include",
@@ -45,6 +45,7 @@ cc_library {
         "libstagefright_foundation",
         "libui",
         "libv4l2_codec2_common",
+        "libv4l2_codec2_components",
     ],
 
     cflags: [
