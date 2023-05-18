@@ -35,6 +35,7 @@ public:
 
     // Locate the sequence parameter set (SPS).
     virtual bool locateSPS() = 0;
+    virtual bool locateIDR() = 0;
 
     // Gets current NAL data (start code is not included).
     const uint8_t* data() const;

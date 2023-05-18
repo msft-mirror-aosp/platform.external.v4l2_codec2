@@ -113,6 +113,9 @@ private:
 
     std::queue<DecodeRequest> mDecodeRequests;
     std::map<int32_t, DecodeCB> mPendingDecodeCbs;
+    // Marks that we need to wait for DRC before drain can complete.
+    bool mPendingDRC = false;
+    VideoCodec mCodec;
 
     // Tracks the last DMA buffer ID which was used for a given V4L2 input
     // buffer ID. Used to try to avoid re-importing buffers.

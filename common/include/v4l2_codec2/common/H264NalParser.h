@@ -26,6 +26,7 @@ public:
 
     // Locate the sequence parameter set (SPS).
     bool locateSPS() override;
+    bool locateIDR() override;
 
     // Get the type of the current NAL unit.
     uint8_t type() const;
