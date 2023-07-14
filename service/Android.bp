@@ -61,4 +61,5 @@ cc_binary {
             init_rc: ["android.hardware.media.c2@1.2-service-v4l2-64.rc"],
         },
     },
+    vintf_fragments: ["android.hardware.media.c2@1.2-service-v4l2.xml"],
 }
