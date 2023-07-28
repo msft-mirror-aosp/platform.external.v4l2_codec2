@@ -54,6 +54,11 @@ C2R DecodeInterface::SizeSetter(bool /* mayBlock */,
             .plus(videoSize.F(videoSize.v.height).validatePossible(videoSize.v.height));
 }
 
+C2R DecodeInterface::InputSizeSetter(bool /* mayBlock */,
+                                     C2P<C2StreamMaxBufferSizeInfo::input>& inputSize) {
+    return inputSize.F(inputSize.v.value).validatePossible(inputSize.v.value);
+}
+
 // static
 template <typename T>
 C2R DecodeInterface::DefaultColorAspectsSetter(bool /* mayBlock */, C2P<T>& def) {
@@ -91,7 +96,10 @@ C2R DecodeInterface::MergedColorAspectsSetter(bool /* mayBlock */,
 C2R DecodeInterface::MaxInputBufferSizeCalculator(
         bool /* mayBlock */, C2P<C2StreamMaxBufferSizeInfo::input>& me,
         const C2P<C2StreamPictureSizeInfo::output>& size) {
-    me.set().value = calculateInputBufferSize(size.v.width * size.v.height);
+    size_t calculatedSize = calculateInputBufferSize(size.v.width * size.v.height);
+
+    if (me.v.value < calculatedSize) me.set().value = calculatedSize;
+
     return C2R::Ok();
 }
 
@@ -297,6 +305,7 @@ DecodeInterface::DecodeInterface(const std::string& name,
                     .withFields({
                             C2F(mMaxInputSize, value).any(),
                     })
+                    .withSetter(InputSizeSetter)
                     .calculatedAs(MaxInputBufferSizeCalculator, mSize)
                     .build());
 
@@ -395,7 +404,7 @@ DecodeInterface::DecodeInterface(const std::string& name,
 }
 
 size_t DecodeInterface::getInputBufferSize() const {
-    return calculateInputBufferSize(mSize->width * mSize->height);
+    return mMaxInputSize->value;
 }
 
 c2_status_t DecodeInterface::queryColorAspects(

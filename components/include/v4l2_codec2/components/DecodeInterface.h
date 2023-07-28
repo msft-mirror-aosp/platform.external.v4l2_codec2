@@ -40,6 +40,7 @@ private:
     // Configurable parameter setters.
     static C2R ProfileLevelSetter(bool mayBlock, C2P<C2StreamProfileLevelInfo::input>& info);
     static C2R SizeSetter(bool mayBlock, C2P<C2StreamPictureSizeInfo::output>& videoSize);
+    static C2R InputSizeSetter(bool mayBlock, C2P<C2StreamMaxBufferSizeInfo::input>& inputSize);
     static C2R MaxInputBufferSizeCalculator(bool mayBlock,
                                             C2P<C2StreamMaxBufferSizeInfo::input>& me,
                                             const C2P<C2StreamPictureSizeInfo::output>& size);
