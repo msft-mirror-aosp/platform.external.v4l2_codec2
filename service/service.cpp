@@ -14,13 +14,17 @@
 
 #include <v4l2_codec2/components/V4L2ComponentStore.h>
 
-// Default policy for codec2.0 service.
+// This is the absolute on-device path of the prebuild_etc module
+// "android.hardware.media.c2-default-seccomp_policy" in Android.bp.
 static constexpr char kBaseSeccompPolicyPath[] =
-        "/vendor/etc/seccomp_policy/android.hardware.media.c2@1.2-default-seccomp_policy";
+        "/vendor/etc/seccomp_policy/"
+        "android.hardware.media.c2-default-seccomp_policy";
 
-// Additional device-specific seccomp permissions can be added in this file.
+// Additional seccomp permissions can be added in this file.
+// This file does not exist by default.
 static constexpr char kExtSeccompPolicyPath[] =
-        "/vendor/etc/seccomp_policy/codec2.vendor.ext.policy";
+        "/vendor/etc/seccomp_policy/"
+        "android.hardware.media.c2-extended-seccomp_policy";
 
 int main(int /* argc */, char** /* argv */) {
     ALOGD("Service starting...");
