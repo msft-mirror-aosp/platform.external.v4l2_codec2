@@ -290,6 +290,9 @@ bool V4L2Decoder::startOutputQueue(size_t minOutputBuffersCount, enum v4l2_memor
 
     mFrameAtDevice.clear();
     mBlockIdToV4L2Id.clear();
+    while (!mReuseFrameQueue.empty()) {
+        mReuseFrameQueue.pop();
+    }
 
     const size_t adjustedNumOutputBuffers =
             mOutputQueue->allocateBuffers(*numOutputBuffers, memory);
@@ -497,7 +500,22 @@ void V4L2Decoder::flush() {
     const bool isOutputStreaming = mOutputQueue->isStreaming();
     mDevice->stopPolling();
     mOutputQueue->streamoff();
+
+    // Extract currently enqueued output picture buffers to be queued later first.
+    // See b/270003218 and b/297228544.
+    for (auto& [v4l2Id, frame] : mFrameAtDevice) {
+        // Find corresponding mapping block ID (DMABUF ID) to V4L2 buffer ID.
+        // The buffer was enqueued to device therefore such mapping have to exist.
+        auto blockIdIter =
+                std::find_if(mBlockIdToV4L2Id.begin(), mBlockIdToV4L2Id.end(),
+                             [v4l2Id = v4l2Id](const auto& el) { return el.second == v4l2Id; });
+
+        ALOG_ASSERT(blockIdIter != mBlockIdToV4L2Id.end());
+        size_t blockId = blockIdIter->first;
+        mReuseFrameQueue.push(std::make_pair(blockId, std::move(frame)));
+    }
     mFrameAtDevice.clear();
+
     mInputQueue->streamoff();
 
     // Streamon both V4L2 queues.
@@ -729,10 +747,26 @@ void V4L2Decoder::tryFetchVideoFrame() {
         return;
     }
 
-    if (!mVideoFramePool->getVideoFrame(
-                ::base::BindOnce(&V4L2Decoder::onVideoFrameReady, mWeakThis))) {
-        ALOGV("%s(): Previous callback is running, ignore.", __func__);
+    if (mReuseFrameQueue.empty()) {
+        if (!mVideoFramePool->getVideoFrame(
+                    ::base::BindOnce(&V4L2Decoder::onVideoFrameReady, mWeakThis))) {
+            ALOGV("%s(): Previous callback is running, ignore.", __func__);
+        }
+
+        return;
     }
+
+    // Reuse output picture buffers that were abandoned after STREAMOFF first.
+    // NOTE(b/270003218 and b/297228544): This avoids issues with lack of
+    // ability to return all picture buffers on STREAMOFF from VDA and
+    // saves on IPC with BufferQueue increasing overall responsiveness.
+    uint32_t blockId = mReuseFrameQueue.front().first;
+    std::unique_ptr<VideoFrame> frame = std::move(mReuseFrameQueue.front().second);
+    mReuseFrameQueue.pop();
+
+    // Avoid recursive calls
+    mTaskRunner->PostTask(FROM_HERE, ::base::BindOnce(&V4L2Decoder::onVideoFrameReady, mWeakThis,
+                                                      std::make_pair(std::move(frame), blockId)));
 }
 
 void V4L2Decoder::onVideoFrameReady(
@@ -774,6 +808,7 @@ void V4L2Decoder::onVideoFrameReady(
         const size_t v4l2BufferId = mBlockIdToV4L2Id.size();
         mBlockIdToV4L2Id.emplace(blockId, v4l2BufferId);
         outputBuffer = mOutputQueue->getFreeBuffer(v4l2BufferId);
+        ALOG_ASSERT(v4l2BufferId == outputBuffer->bufferId());
     } else {
         // If this happens, this is a bug in VideoFramePool. It should never
         // provide more blocks than we have V4L2 buffers.

@@ -10,6 +10,7 @@
 #include <cstdint>
 #include <memory>
 #include <optional>
+#include <utility>
 
 #include <base/callback.h>
 #include <base/memory/weak_ptr.h>
@@ -130,7 +131,14 @@ private:
     ui::Size mCodedSize;
     Rect mVisibleRect;
 
+    // Currently enqueued frame at the deocder device, mapped using V4L2 buffer ID.
     std::map<size_t, std::unique_ptr<VideoFrame>> mFrameAtDevice;
+
+    // A queue of previously enqueued frames, that were returned during flush
+    // (STREAMOFF). Those frames will be reused as soon as `tryFetchVideoFrame`
+    // is called. This is a workaround for b/297228544 and helps with general
+    // responsiveness of the video playback due to b/270003218.
+    std::queue<std::pair<size_t, std::unique_ptr<VideoFrame>>> mReuseFrameQueue;
 
     // Block IDs can be arbitrarily large, but we only have a limited number of
     // buffers. This maintains an association between a block ID and a specific
