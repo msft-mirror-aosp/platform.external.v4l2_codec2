@@ -27,11 +27,11 @@ struct V4L2ComponentName {
     static const std::string kHEVCSecureDecoder;
 
     // Return true if |name| is a valid component name.
-    static bool isValid(const char* name);
+    static bool isValid(const std::string& name);
 
     // Return true if |name| is a encoder name.
     // Note that |name| should be a valid component name.
-    static bool isEncoder(const char* name);
+    static bool isEncoder(const std::string& name);
 
     // Return true if |name| is a decoder name.
     // Note that |name| should be a valid component name.
