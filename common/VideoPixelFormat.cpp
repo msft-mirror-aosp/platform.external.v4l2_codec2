@@ -82,6 +82,8 @@ std::string videoPixelFormatToString(VideoPixelFormat format) {
         return "XB30";
     case VideoPixelFormat::BGRA:
         return "BGRA";
+    case VideoPixelFormat::RGBA:
+        return "BGRA";
     case VideoPixelFormat::UNKNOWN:
         return "UNKNOWN";
     }
@@ -116,6 +118,7 @@ size_t bitDepth(VideoPixelFormat format) {
     case VideoPixelFormat::ABGR:
     case VideoPixelFormat::XBGR:
     case VideoPixelFormat::BGRA:
+    case VideoPixelFormat::RGBA:
         return 8;
     case VideoPixelFormat::YUV420P9:
     case VideoPixelFormat::YUV422P9:
@@ -153,6 +156,7 @@ static bool RequiresEvenSizeAllocation(VideoPixelFormat format) {
     case VideoPixelFormat::XR30:
     case VideoPixelFormat::XB30:
     case VideoPixelFormat::BGRA:
+    case VideoPixelFormat::RGBA:
         return false;
     case VideoPixelFormat::NV12:
     case VideoPixelFormat::NV21:
@@ -185,6 +189,7 @@ size_t numPlanes(VideoPixelFormat format) {
     case VideoPixelFormat::YUY2:
     case VideoPixelFormat::ARGB:
     case VideoPixelFormat::BGRA:
+    case VideoPixelFormat::RGBA:
     case VideoPixelFormat::XRGB:
     case VideoPixelFormat::RGB24:
     case VideoPixelFormat::MJPEG:
@@ -269,6 +274,7 @@ int bytesPerElement(VideoPixelFormat format, size_t plane) {
     switch (format) {
     case VideoPixelFormat::ARGB:
     case VideoPixelFormat::BGRA:
+    case VideoPixelFormat::RGBA:
     case VideoPixelFormat::XRGB:
     case VideoPixelFormat::ABGR:
     case VideoPixelFormat::XBGR:
@@ -361,6 +367,7 @@ android::ui::Size SampleSize(VideoPixelFormat format, size_t plane) {
         case VideoPixelFormat::XR30:
         case VideoPixelFormat::XB30:
         case VideoPixelFormat::BGRA:
+        case VideoPixelFormat::RGBA:
             ALOGE("Invalid pixel format");
         }
     }
