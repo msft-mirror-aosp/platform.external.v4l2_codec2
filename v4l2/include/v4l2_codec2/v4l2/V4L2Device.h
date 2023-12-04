@@ -128,7 +128,7 @@ private:
     // Do the actual queue operation once the v4l2_buffer structure is properly filled.
     bool doQueue() &&;
 
-    V4L2WritableBufferRef(const struct v4l2_buffer& v4l2Buffer, base::WeakPtr<V4L2Queue> queue);
+    V4L2WritableBufferRef(const struct v4l2_buffer& v4l2Buffer, ::base::WeakPtr<V4L2Queue> queue);
 
     V4L2WritableBufferRef(const V4L2WritableBufferRef&) = delete;
     V4L2WritableBufferRef& operator=(const V4L2WritableBufferRef&) = delete;
@@ -147,7 +147,7 @@ private:
 // buffers they originate from. This flexibility is required because V4L2ReadableBufferRefs can be
 // embedded into VideoFrames, which are then passed to other threads and not necessarily destroyed
 // before the V4L2Queue buffers are freed.
-class V4L2ReadableBuffer : public base::RefCountedThreadSafe<V4L2ReadableBuffer> {
+class V4L2ReadableBuffer : public ::base::RefCountedThreadSafe<V4L2ReadableBuffer> {
 public:
     // Returns whether the V4L2_BUF_FLAG_LAST flag is set for this buffer.
     bool isLast() const;
@@ -171,11 +171,11 @@ public:
 
 private:
     friend class V4L2BufferRefFactory;
-    friend class base::RefCountedThreadSafe<V4L2ReadableBuffer>;
+    friend class ::base::RefCountedThreadSafe<V4L2ReadableBuffer>;
 
     ~V4L2ReadableBuffer();
 
-    V4L2ReadableBuffer(const struct v4l2_buffer& v4l2Buffer, base::WeakPtr<V4L2Queue> queue);
+    V4L2ReadableBuffer(const struct v4l2_buffer& v4l2Buffer, ::base::WeakPtr<V4L2Queue> queue);
 
     V4L2ReadableBuffer(const V4L2ReadableBuffer&) = delete;
     V4L2ReadableBuffer& operator=(const V4L2ReadableBuffer&) = delete;
@@ -206,7 +206,7 @@ class V4L2Buffer;
 //    metadata, as well as making other references to it. The buffer will not be reused until all
 //    the references are dropped. Once this happens, the buffer goes back to the free list described
 //    in 1).
-class V4L2Queue : public base::RefCountedThreadSafe<V4L2Queue> {
+class V4L2Queue : public ::base::RefCountedThreadSafe<V4L2Queue> {
 public:
     // Set |fourcc| as the current format on this queue. |size| corresponds to the desired buffer's
     // dimensions (i.e. width and height members of v4l2_pix_format_mplane (if not applicable, pass
@@ -229,10 +229,10 @@ public:
                                                 size_t bufferSize) WARN_UNUSED_RESULT;
 
     // Returns the currently set format on the queue. The result is returned as a std::pair where
-    // the first member is the format, or base::nullopt if the format could not be obtained due to
-    // an ioctl error. The second member is only used in case of an error and contains the |errno|
-    // set by the failing ioctl. If the first member is not base::nullopt, the second member will
-    // always be zero.
+    // the first member is the format, or ::base::nullopt if the format could not be obtained due
+    // to an ioctl error. The second member is only used in case of an error and contains the
+    // |errno| set by the failing ioctl. If the first member is not ::base::nullopt, the second
+    // member will always be zero.
     //
     // If the second member is 0, then the first member is guaranteed to have a valid value. So
     // clients that are not interested in the precise error message can just check that the first
@@ -329,19 +329,20 @@ private:
 
     scoped_refptr<V4L2Device> mDevice;
     // Callback to call in this queue's destructor.
-    base::OnceClosure mDestroyCb;
+    ::base::OnceClosure mDestroyCb;
 
-    V4L2Queue(scoped_refptr<V4L2Device> dev, enum v4l2_buf_type type, base::OnceClosure destroyCb);
+    V4L2Queue(scoped_refptr<V4L2Device> dev, enum v4l2_buf_type type,
+              ::base::OnceClosure destroyCb);
     friend class V4L2QueueFactory;
     friend class V4L2BufferRefBase;
-    friend class base::RefCountedThreadSafe<V4L2Queue>;
+    friend class ::base::RefCountedThreadSafe<V4L2Queue>;
 
     SEQUENCE_CHECKER(mSequenceChecker);
 
-    base::WeakPtrFactory<V4L2Queue> mWeakThisFactory{this};
+    ::base::WeakPtrFactory<V4L2Queue> mWeakThisFactory{this};
 };
 
-class V4L2Device : public base::RefCountedThreadSafe<V4L2Device> {
+class V4L2Device : public ::base::RefCountedThreadSafe<V4L2Device> {
 public:
     // Utility format conversion functions
     // If there is no corresponding single- or multi-planar format, returns 0.
@@ -375,7 +376,7 @@ public:
     // Composes human readable string of v4l2_buffer.
     static std::string v4L2BufferToString(const struct v4l2_buffer& buffer);
 
-    // Composes VideoFrameLayout based on v4l2_format. If error occurs, it returns base::nullopt.
+    // Composes VideoFrameLayout based on v4l2_format. If error occurs, it returns ::base::nullopt.
     static std::optional<VideoFrameLayout> v4L2FormatToVideoFrameLayout(
             const struct v4l2_format& format);
 
@@ -442,8 +443,8 @@ public:
     // Return a vector of dmabuf file descriptors, exported for V4L2 buffer with |index|, assuming
     // the buffer contains |numPlanes| V4L2 planes and is of |bufType|. Return an empty vector on
     // failure. The caller is responsible for closing the file descriptors after use.
-    std::vector<base::ScopedFD> getDmabufsForV4L2Buffer(int index, size_t numPlanes,
-                                                        enum v4l2_buf_type bufType);
+    std::vector<::base::ScopedFD> getDmabufsForV4L2Buffer(int index, size_t numPlanes,
+                                                          enum v4l2_buf_type bufType);
 
     // Returns the preferred V4L2 input formats for |type| or empty if none.
     std::vector<uint32_t> preferredInputFormat(Type type);
@@ -472,9 +473,9 @@ public:
     // a buffer is ready to be dequeued and/or a V4L2 event has been posted. |errorCallback| will
     // be posted to the client's
     // sequence if a polling error has occurred.
-    bool startPolling(scoped_refptr<base::SequencedTaskRunner> taskRunner,
+    bool startPolling(scoped_refptr<::base::SequencedTaskRunner> taskRunner,
                       android::V4L2DevicePoller::EventCallback eventCallback,
-                      base::RepeatingClosure errorCallback);
+                      ::base::RepeatingClosure errorCallback);
     // Stop polling this V4L2Device if polling was active. No new events will be posted after this
     // method has returned.
     bool stopPolling();
@@ -503,7 +504,7 @@ private:
     // Enumerate all V4L2 devices on the system for |type| and return them
     static const DeviceInfos& getDeviceInfosForType(V4L2Device::Type type);
 
-    friend class base::RefCountedThreadSafe<V4L2Device>;
+    friend class ::base::RefCountedThreadSafe<V4L2Device>;
     V4L2Device(uint32_t debugStreamId);
     ~V4L2Device();
 
@@ -530,13 +531,13 @@ private:
     uint32_t mDebugStreamId;
 
     // The actual device fd.
-    base::ScopedFD mDeviceFd;
+    ::base::ScopedFD mDeviceFd;
 
     // eventfd fd to signal device poll thread when its poll() should be interrupted.
-    base::ScopedFD mDevicePollInterruptFd;
+    ::base::ScopedFD mDevicePollInterruptFd;
 
     // Associates a v4l2_buf_type to its queue.
-    base::flat_map<enum v4l2_buf_type, V4L2Queue*> mQueues;
+    ::base::flat_map<enum v4l2_buf_type, V4L2Queue*> mQueues;
 
     // Used if EnablePolling() is called to signal the user that an event happened or a buffer is
     // ready to be dequeued.
