@@ -202,6 +202,16 @@ bool HEVCNalParser::locateSPS() {
     return false;
 }
 
+bool HEVCNalParser::locateIDR() {
+    while (locateNextNal()) {
+        if (length() == 0) continue;
+        if (type() != kIDRType) continue;
+        return true;
+    }
+
+    return false;
+}
+
 uint8_t HEVCNalParser::type() const {
     // First bit is forbidden_zero_bit, next 6 are nal_unit_type
     constexpr uint8_t kNALTypeMask = 0x7e;

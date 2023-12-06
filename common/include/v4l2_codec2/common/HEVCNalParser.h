@@ -15,6 +15,7 @@ namespace android {
 class HEVCNalParser : public NalParser {
 public:
     // Type of a SPS NAL unit.
+    static constexpr uint8_t kIDRType = 19;  //IDR_W_RADL
     static constexpr uint8_t kSPSType = 33;
 
     HEVCNalParser(const uint8_t* data, size_t length);
@@ -22,6 +23,7 @@ public:
 
     // Locate the sequence parameter set (SPS).
     bool locateSPS() override;
+    bool locateIDR() override;
 
     // Get the type of the current NAL unit.
     uint8_t type() const override;

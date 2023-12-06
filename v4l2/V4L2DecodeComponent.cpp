@@ -106,7 +106,7 @@ void V4L2DecodeComponent::startTask(c2_status_t* status, ::base::WaitableEvent* 
                                                          ::base::Unretained(this)),
                                    ::base::BindRepeating(&V4L2DecodeComponent::reportError,
                                                          ::base::Unretained(this), C2_CORRUPTED),
-                                   mDecoderTaskRunner);
+                                   mDecoderTaskRunner, mIsSecure);
     if (!mDecoder) {
         ALOGE("Failed to create V4L2Decoder for %s", VideoCodecToString(*codec));
         return;

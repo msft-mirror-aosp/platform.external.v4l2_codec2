@@ -81,6 +81,16 @@ bool H264NalParser::locateSPS() {
     return false;
 }
 
+bool H264NalParser::locateIDR() {
+    while (locateNextNal()) {
+        if (length() == 0) continue;
+        if (type() != kIDRType) continue;
+        return true;
+    }
+
+    return false;
+}
+
 uint8_t H264NalParser::type() const {
     // First byte is forbidden_zero_bit (1) + nal_ref_idc (2) + nal_unit_type (5)
     constexpr uint8_t kNALTypeMask = 0x1f;
