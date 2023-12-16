@@ -32,7 +32,7 @@ class V4L2DevicePoller {
 public:
     // Callback to be called when buffer ready/V4L2 event has potentially been polled. |event| is
     // set if a V4L2 event has been detected.
-    using EventCallback = base::RepeatingCallback<void(bool event)>;
+    using EventCallback = ::base::RepeatingCallback<void(bool event)>;
 
     // Create a poller for |device|, using a thread named |threadName|. Notification won't start
     // until |startPolling()| is called.
@@ -45,7 +45,7 @@ public:
     // again in order to be notified for them.
     //
     // If an error occurs during polling, |mErrorCallback| will be posted on the caller's sequence.
-    bool startPolling(EventCallback eventCallback, base::RepeatingClosure errorCallback);
+    bool startPolling(EventCallback eventCallback, ::base::RepeatingClosure errorCallback);
     // Stop polling and stop the thread. The poller won't post any new event to the caller's
     // sequence after this method has returned.
     bool stopPolling();
@@ -66,19 +66,19 @@ private:
     // V4L2 device we are polling.
     V4L2Device* const mDevice;
     // Thread on which polling is done.
-    base::Thread mPollThread;
+    ::base::Thread mPollThread;
     // Callback to post to the client's sequence when an event occurs.
     EventCallback mEventCallback;
     // Closure to post to the client's sequence when an error occurs.
-    base::RepeatingClosure mErrorCallback;
+    ::base::RepeatingClosure mErrorCallback;
     // Client sequence's task runner, where closures are posted.
-    scoped_refptr<base::SequencedTaskRunner> mClientTaskTunner;
+    scoped_refptr<::base::SequencedTaskRunner> mClientTaskTunner;
 
     // Since poll() returns immediately if no buffers have been queued, we cannot rely on it to
     // pause the polling thread until an event occurs. Instead,
     // the polling thread will wait on this WaitableEvent (signaled by |schedulePoll| before calling
     // poll(), so we only call it when we are actually waiting for an event.
-    base::WaitableEvent mTriggerPoll;
+    ::base::WaitableEvent mTriggerPoll;
     // Set to true when we wish to stop polling, instructing the poller thread to break its loop.
     std::atomic_bool mStopPolling;
 };
