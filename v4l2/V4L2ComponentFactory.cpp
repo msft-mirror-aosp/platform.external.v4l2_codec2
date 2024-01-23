@@ -5,16 +5,18 @@
 //#define LOG_NDEBUG 0
 #define LOG_TAG "V4L2ComponentFactory"
 
-#include <v4l2_codec2/components/V4L2ComponentFactory.h>
+#include <v4l2_codec2/v4l2/V4L2ComponentFactory.h>
 
 #include <codec2/hidl/1.0/InputBufferManager.h>
 #include <log/log.h>
 
-#include <v4l2_codec2/common/V4L2ComponentCommon.h>
-#include <v4l2_codec2/components/V4L2DecodeComponent.h>
-#include <v4l2_codec2/components/V4L2DecodeInterface.h>
-#include <v4l2_codec2/components/V4L2EncodeComponent.h>
-#include <v4l2_codec2/components/V4L2EncodeInterface.h>
+#include <v4l2_codec2/common/Common.h>
+#include <v4l2_codec2/components/DecodeInterface.h>
+#include <v4l2_codec2/components/EncodeInterface.h>
+#include <v4l2_codec2/v4l2/V4L2ComponentCommon.h>
+#include <v4l2_codec2/v4l2/V4L2DecodeComponent.h>
+#include <v4l2_codec2/v4l2/V4L2Device.h>
+#include <v4l2_codec2/v4l2/V4L2EncodeComponent.h>
 
 namespace android {
 
@@ -52,7 +54,7 @@ V4L2ComponentFactory::V4L2ComponentFactory(const std::string& componentName, boo
     constexpr nsecs_t kMinFrameIntervalNs = 1000000000ull / 60;
     uint32_t delayCount = 0;
     for (auto c : kAllCodecs) {
-        delayCount = std::max(delayCount, V4L2DecodeInterface::getOutputDelay(c));
+        delayCount = std::max(delayCount, DecodeInterface::getOutputDelay(c));
     }
     utils::InputBufferManager::setNotificationInterval(delayCount * kMinFrameIntervalNs / 2);
 }
@@ -69,9 +71,21 @@ c2_status_t V4L2ComponentFactory::createComponent(c2_node_id_t id,
     }
 
     if (mIsEncoder) {
-        *component = V4L2EncodeComponent::create(mComponentName, id, mReflector, deleter);
+        std::shared_ptr<EncodeInterface> intfImpl;
+        c2_status_t status = createEncodeInterface(&intfImpl);
+        if (status != C2_OK) {
+            return status;
+        }
+
+        *component = V4L2EncodeComponent::create(mComponentName, id, std::move(intfImpl), deleter);
     } else {
-        *component = V4L2DecodeComponent::create(mComponentName, id, mReflector, deleter);
+        std::shared_ptr<DecodeInterface> intfImpl;
+        c2_status_t status = createDecodeInterface(&intfImpl);
+        if (status != C2_OK) {
+            return status;
+        }
+
+        *component = V4L2DecodeComponent::create(mComponentName, id, std::move(intfImpl), deleter);
     }
     return *component ? C2_OK : C2_NO_MEMORY;
 }
@@ -87,20 +101,68 @@ c2_status_t V4L2ComponentFactory::createInterface(
     }
 
     if (mIsEncoder) {
+        std::shared_ptr<EncodeInterface> intfImpl;
+        c2_status_t status = createEncodeInterface(&intfImpl);
+        if (status != C2_OK) {
+            return status;
+        }
+
         *interface = std::shared_ptr<C2ComponentInterface>(
-                new SimpleInterface<V4L2EncodeInterface>(
-                        mComponentName.c_str(), id,
-                        std::make_shared<V4L2EncodeInterface>(mComponentName, mReflector)),
+                new SimpleInterface<EncodeInterface>(mComponentName.c_str(), id,
+                                                     std::move(intfImpl)),
                 deleter);
         return C2_OK;
     } else {
+        std::shared_ptr<DecodeInterface> intfImpl;
+        c2_status_t status = createDecodeInterface(&intfImpl);
+        if (status != C2_OK) {
+            return status;
+        }
+
         *interface = std::shared_ptr<C2ComponentInterface>(
-                new SimpleInterface<V4L2DecodeInterface>(
-                        mComponentName.c_str(), id,
-                        std::make_shared<V4L2DecodeInterface>(mComponentName, mReflector)),
+                new SimpleInterface<DecodeInterface>(mComponentName.c_str(), id,
+                                                     std::move(intfImpl)),
                 deleter);
         return C2_OK;
     }
+}
+
+c2_status_t V4L2ComponentFactory::createEncodeInterface(
+        std::shared_ptr<EncodeInterface>* intfImpl) {
+    if (!mCapabilites) {
+        auto codec = V4L2ComponentName::getCodec(mComponentName);
+        if (!codec) {
+            return C2_CORRUPTED;
+        }
+        mCapabilites = std::make_unique<SupportedCapabilities>(
+                V4L2Device::queryEncodingCapabilities(*codec));
+    }
+
+    *intfImpl = std::make_shared<EncodeInterface>(mComponentName, mReflector, *mCapabilites);
+    if (*intfImpl == nullptr) {
+        return C2_NO_MEMORY;
+    }
+
+    return (*intfImpl)->status();
+}
+
+c2_status_t V4L2ComponentFactory::createDecodeInterface(
+        std::shared_ptr<DecodeInterface>* intfImpl) {
+    if (!mCapabilites) {
+        auto codec = V4L2ComponentName::getCodec(mComponentName);
+        if (!codec) {
+            return C2_CORRUPTED;
+        }
+        mCapabilites = std::make_unique<SupportedCapabilities>(
+                V4L2Device::queryDecodingCapabilities(*codec));
+    }
+
+    *intfImpl = std::make_shared<DecodeInterface>(mComponentName, mReflector, *mCapabilites);
+    if (*intfImpl == nullptr) {
+        return C2_NO_MEMORY;
+    }
+
+    return (*intfImpl)->status();
 }
 
 }  // namespace android

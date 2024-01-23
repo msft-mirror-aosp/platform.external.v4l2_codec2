@@ -1,11 +1,11 @@
-// Copyright 2020 The Chromium Authors. All rights reserved.
+// Copyright 2023 The Chromium Authors. All rights reserved.
 // Use of this source code is governed by a BSD-style license that can be
-// found in the LICENSE file.
+// found in the LICENSE file
 
 //#define LOG_NDEBUG 0
-#define LOG_TAG "V4L2EncodeComponent"
+#define LOG_TAG "EncodeComponent"
 
-#include <v4l2_codec2/components/V4L2EncodeComponent.h>
+#include <v4l2_codec2/components/EncodeComponent.h>
 
 #include <inttypes.h>
 
@@ -18,30 +18,36 @@
 #include <android/hardware/graphics/common/1.0/types.h>
 #include <base/bind.h>
 #include <base/bind_helpers.h>
-#include <cutils/properties.h>
 #include <log/log.h>
 #include <media/stagefright/MediaDefs.h>
 #include <ui/GraphicBuffer.h>
 #include <ui/Size.h>
 
-#include <v4l2_codec2/common/Common.h>
 #include <v4l2_codec2/common/EncodeHelpers.h>
 #include <v4l2_codec2/common/FormatConverter.h>
-#include <v4l2_codec2/common/VideoPixelFormat.h>
 #include <v4l2_codec2/components/BitstreamBuffer.h>
-#include <v4l2_codec2/components/V4L2EncodeInterface.h>
-#include <v4l2_codec2/components/V4L2Encoder.h>
+#include <v4l2_codec2/components/EncodeInterface.h>
+#include <v4l2_codec2/components/VideoEncoder.h>
 
 using android::hardware::graphics::common::V1_0::BufferUsage;
 
 namespace android {
 
 namespace {
+// Create an input frame from the specified graphic block.
+std::unique_ptr<VideoEncoder::InputFrame> createInputFrame(
+        const C2ConstGraphicBlock& block, VideoPixelFormat format,
+        const std::vector<VideoFramePlane>& planes, uint64_t index, int64_t timestamp) {
+    std::vector<int> fds;
+    const C2Handle* const handle = block.handle();
+    for (int i = 0; i < handle->numFds; i++) {
+        fds.emplace_back(handle->data[i]);
+    }
 
-const VideoPixelFormat kInputPixelFormat = VideoPixelFormat::NV12;
-
-// The peak bitrate in function of the target bitrate, used when the bitrate mode is VBR.
-constexpr uint32_t kPeakBitrateMultiplier = 2u;
+    return std::make_unique<VideoEncoder::InputFrame>(std::move(fds), planes, format, index,
+                                                      timestamp);
+}
+}  // namespace
 
 // Get the video frame layout from the specified |inputBlock|.
 // TODO(dstaessens): Clean up code extracting layout from a C2GraphicBlock.
@@ -58,7 +64,7 @@ std::optional<std::vector<VideoFramePlane>> getVideoFrameLayout(const C2ConstGra
     // IMPLEMENTATION_DEFINED and its backed format is RGB. We fill the layout by using
     // ImplDefinedToRGBXMap in the case.
     if (layout.type == C2PlanarLayout::TYPE_UNKNOWN) {
-        std::unique_ptr<ImplDefinedToRGBXMap> idMap = ImplDefinedToRGBXMap::Create(block);
+        std::unique_ptr<ImplDefinedToRGBXMap> idMap = ImplDefinedToRGBXMap::create(block);
         if (idMap == nullptr) {
             ALOGE("Unable to parse RGBX_8888 from IMPLEMENTATION_DEFINED");
             return std::nullopt;
@@ -169,94 +175,35 @@ std::optional<uint32_t> getVideoFrameStride(VideoPixelFormat format, ui::Size si
     return planes.value()[0].mStride;
 }
 
-// Create an input frame from the specified graphic block.
-std::unique_ptr<V4L2Encoder::InputFrame> CreateInputFrame(const C2ConstGraphicBlock& block,
-                                                          uint64_t index, int64_t timestamp) {
-    VideoPixelFormat format;
-    std::optional<std::vector<VideoFramePlane>> planes = getVideoFrameLayout(block, &format);
-    if (!planes) {
-        ALOGE("Failed to get input block's layout");
-        return nullptr;
-    }
-
-    std::vector<int> fds;
-    const C2Handle* const handle = block.handle();
-    for (int i = 0; i < handle->numFds; i++) {
-        fds.emplace_back(handle->data[i]);
-    }
-
-    return std::make_unique<V4L2Encoder::InputFrame>(std::move(fds), std::move(planes.value()),
-                                                     format, index, timestamp);
-}
-
-// Check whether the specified |profile| is an H.264 profile.
-bool IsH264Profile(C2Config::profile_t profile) {
-    return (profile >= C2Config::PROFILE_AVC_BASELINE &&
-            profile <= C2Config::PROFILE_AVC_ENHANCED_MULTIVIEW_DEPTH_HIGH);
-}
-
-}  // namespace
-
-// static
-std::atomic<int32_t> V4L2EncodeComponent::sConcurrentInstances = 0;
-
-// static
-std::shared_ptr<C2Component> V4L2EncodeComponent::create(
-        C2String name, c2_node_id_t id, std::shared_ptr<C2ReflectorHelper> helper,
-        C2ComponentFactory::ComponentDeleter deleter) {
-    ALOGV("%s(%s)", __func__, name.c_str());
-
-    static const int32_t kMaxConcurrentInstances =
-            property_get_int32("ro.vendor.v4l2_codec2.encode_concurrent_instances", -1);
-
-    static std::mutex mutex;
-    std::lock_guard<std::mutex> lock(mutex);
-    if (kMaxConcurrentInstances >= 0 && sConcurrentInstances.load() >= kMaxConcurrentInstances) {
-        ALOGW("Cannot create additional encoder, maximum number of instances reached: %d",
-              kMaxConcurrentInstances);
-        return nullptr;
-    }
-
-    auto interface = std::make_shared<V4L2EncodeInterface>(name, std::move(helper));
-    if (interface->status() != C2_OK) {
-        ALOGE("Component interface initialization failed (error code %d)", interface->status());
-        return nullptr;
-    }
-
-    return std::shared_ptr<C2Component>(new V4L2EncodeComponent(name, id, std::move(interface)),
-                                        deleter);
-}
-
-V4L2EncodeComponent::V4L2EncodeComponent(C2String name, c2_node_id_t id,
-                                         std::shared_ptr<V4L2EncodeInterface> interface)
+EncodeComponent::EncodeComponent(C2String name, c2_node_id_t id,
+                                 std::shared_ptr<EncodeInterface> interface)
       : mName(name),
         mId(id),
         mInterface(std::move(interface)),
         mComponentState(ComponentState::LOADED) {
     ALOGV("%s(%s)", __func__, name.c_str());
-
-    sConcurrentInstances.fetch_add(1, std::memory_order_relaxed);
 }
 
-V4L2EncodeComponent::~V4L2EncodeComponent() {
+EncodeComponent::~EncodeComponent() {
     ALOGV("%s()", __func__);
 
     // Stop encoder thread and invalidate pointers if component wasn't stopped before destroying.
-    if (mEncoderThread.IsRunning()) {
+    if (mEncoderThread.IsRunning() && !mEncoderTaskRunner->RunsTasksInCurrentSequence()) {
         mEncoderTaskRunner->PostTask(
                 FROM_HERE, ::base::BindOnce(
-                                   [](::base::WeakPtrFactory<V4L2EncodeComponent>* weakPtrFactory) {
+                                   [](::base::WeakPtrFactory<EncodeComponent>* weakPtrFactory,
+                                      std::unique_ptr<VideoEncoder>* encoder) {
                                        weakPtrFactory->InvalidateWeakPtrs();
+                                       encoder->reset();
                                    },
-                                   &mWeakThisFactory));
+                                   &mWeakThisFactory, &mEncoder));
         mEncoderThread.Stop();
     }
 
-    sConcurrentInstances.fetch_sub(1, std::memory_order_relaxed);
     ALOGV("%s(): done", __func__);
 }
 
-c2_status_t V4L2EncodeComponent::start() {
+c2_status_t EncodeComponent::start() {
     ALOGV("%s()", __func__);
 
     // Lock while starting, to synchronize start/stop/reset/release calls.
@@ -278,7 +225,7 @@ c2_status_t V4L2EncodeComponent::start() {
     ::base::WaitableEvent done;
     bool success = false;
     mEncoderTaskRunner->PostTask(
-            FROM_HERE, ::base::Bind(&V4L2EncodeComponent::startTask, mWeakThis, &success, &done));
+            FROM_HERE, ::base::Bind(&EncodeComponent::startTask, mWeakThis, &success, &done));
     done.Wait();
 
     if (!success) {
@@ -290,7 +237,7 @@ c2_status_t V4L2EncodeComponent::start() {
     return C2_OK;
 }
 
-c2_status_t V4L2EncodeComponent::stop() {
+c2_status_t EncodeComponent::stop() {
     ALOGV("%s()", __func__);
 
     // Lock while stopping, to synchronize start/stop/reset/release calls.
@@ -307,8 +254,8 @@ c2_status_t V4L2EncodeComponent::stop() {
 
     // Wait for the component to stop.
     ::base::WaitableEvent done;
-    mEncoderTaskRunner->PostTask(
-            FROM_HERE, ::base::BindOnce(&V4L2EncodeComponent::stopTask, mWeakThis, &done));
+    mEncoderTaskRunner->PostTask(FROM_HERE,
+                                 ::base::BindOnce(&EncodeComponent::stopTask, mWeakThis, &done));
     done.Wait();
     mEncoderThread.Stop();
 
@@ -318,7 +265,7 @@ c2_status_t V4L2EncodeComponent::stop() {
     return C2_OK;
 }
 
-c2_status_t V4L2EncodeComponent::reset() {
+c2_status_t EncodeComponent::reset() {
     ALOGV("%s()", __func__);
 
     // The interface specification says: "This method MUST be supported in all (including tripped)
@@ -333,7 +280,7 @@ c2_status_t V4L2EncodeComponent::reset() {
     return C2_OK;
 }
 
-c2_status_t V4L2EncodeComponent::release() {
+c2_status_t EncodeComponent::release() {
     ALOGV("%s()", __func__);
 
     // The interface specification says: "This method MUST be supported in stopped state.", but the
@@ -344,7 +291,7 @@ c2_status_t V4L2EncodeComponent::release() {
     return C2_OK;
 }
 
-c2_status_t V4L2EncodeComponent::queue_nb(std::list<std::unique_ptr<C2Work>>* const items) {
+c2_status_t EncodeComponent::queue_nb(std::list<std::unique_ptr<C2Work>>* const items) {
     ALOGV("%s()", __func__);
 
     if (mComponentState != ComponentState::RUNNING) {
@@ -354,7 +301,7 @@ c2_status_t V4L2EncodeComponent::queue_nb(std::list<std::unique_ptr<C2Work>>* co
 
     while (!items->empty()) {
         mEncoderTaskRunner->PostTask(FROM_HERE,
-                                     ::base::BindOnce(&V4L2EncodeComponent::queueTask, mWeakThis,
+                                     ::base::BindOnce(&EncodeComponent::queueTask, mWeakThis,
                                                       std::move(items->front())));
         items->pop_front();
     }
@@ -362,7 +309,7 @@ c2_status_t V4L2EncodeComponent::queue_nb(std::list<std::unique_ptr<C2Work>>* co
     return C2_OK;
 }
 
-c2_status_t V4L2EncodeComponent::drain_nb(drain_mode_t mode) {
+c2_status_t EncodeComponent::drain_nb(drain_mode_t mode) {
     ALOGV("%s()", __func__);
 
     if (mode == DRAIN_CHAIN) {
@@ -373,13 +320,13 @@ c2_status_t V4L2EncodeComponent::drain_nb(drain_mode_t mode) {
         return C2_BAD_STATE;
     }
 
-    mEncoderTaskRunner->PostTask(
-            FROM_HERE, ::base::BindOnce(&V4L2EncodeComponent::drainTask, mWeakThis, mode));
+    mEncoderTaskRunner->PostTask(FROM_HERE,
+                                 ::base::BindOnce(&EncodeComponent::drainTask, mWeakThis, mode));
     return C2_OK;
 }
 
-c2_status_t V4L2EncodeComponent::flush_sm(flush_mode_t mode,
-                                          std::list<std::unique_ptr<C2Work>>* const flushedWork) {
+c2_status_t EncodeComponent::flush_sm(flush_mode_t mode,
+                                      std::list<std::unique_ptr<C2Work>>* const flushedWork) {
     ALOGV("%s()", __func__);
 
     if (mode != FLUSH_COMPONENT) {
@@ -395,19 +342,19 @@ c2_status_t V4L2EncodeComponent::flush_sm(flush_mode_t mode,
     // immediately abandon all non-started work on the encoder thread. We can return all work that
     // can't be immediately discarded using onWorkDone() later.
     ::base::WaitableEvent done;
-    mEncoderTaskRunner->PostTask(FROM_HERE, ::base::BindOnce(&V4L2EncodeComponent::flushTask,
-                                                             mWeakThis, &done, flushedWork));
+    mEncoderTaskRunner->PostTask(FROM_HERE, ::base::BindOnce(&EncodeComponent::flushTask, mWeakThis,
+                                                             &done, flushedWork));
     done.Wait();
 
     return C2_OK;
 }
 
-c2_status_t V4L2EncodeComponent::announce_nb(const std::vector<C2WorkOutline>& items) {
+c2_status_t EncodeComponent::announce_nb(const std::vector<C2WorkOutline>& items) {
     return C2_OMITTED;  // Tunneling is not supported by now
 }
 
-c2_status_t V4L2EncodeComponent::setListener_vb(const std::shared_ptr<Listener>& listener,
-                                                c2_blocking_t mayBlock) {
+c2_status_t EncodeComponent::setListener_vb(const std::shared_ptr<Listener>& listener,
+                                            c2_blocking_t mayBlock) {
     ALOG_ASSERT(mComponentState != ComponentState::UNLOADED);
 
     // Lock so we're sure the component isn't currently starting or stopping.
@@ -425,18 +372,18 @@ c2_status_t V4L2EncodeComponent::setListener_vb(const std::shared_ptr<Listener>&
     ALOG_ASSERT(mayBlock == c2_blocking_t::C2_MAY_BLOCK);
 
     ::base::WaitableEvent done;
-    mEncoderTaskRunner->PostTask(FROM_HERE, ::base::BindOnce(&V4L2EncodeComponent::setListenerTask,
+    mEncoderTaskRunner->PostTask(FROM_HERE, ::base::BindOnce(&EncodeComponent::setListenerTask,
                                                              mWeakThis, listener, &done));
     done.Wait();
 
     return C2_OK;
 }
 
-std::shared_ptr<C2ComponentInterface> V4L2EncodeComponent::intf() {
-    return std::make_shared<SimpleInterface<V4L2EncodeInterface>>(mName.c_str(), mId, mInterface);
+std::shared_ptr<C2ComponentInterface> EncodeComponent::intf() {
+    return std::make_shared<SimpleInterface<EncodeInterface>>(mName.c_str(), mId, mInterface);
 }
 
-void V4L2EncodeComponent::startTask(bool* success, ::base::WaitableEvent* done) {
+void EncodeComponent::startTask(bool* success, ::base::WaitableEvent* done) {
     ALOGV("%s()", __func__);
     ALOG_ASSERT(mEncoderTaskRunner->RunsTasksInCurrentSequence());
 
@@ -444,7 +391,7 @@ void V4L2EncodeComponent::startTask(bool* success, ::base::WaitableEvent* done) 
     done->Signal();
 }
 
-void V4L2EncodeComponent::stopTask(::base::WaitableEvent* done) {
+void EncodeComponent::stopTask(::base::WaitableEvent* done) {
     ALOGV("%s()", __func__);
     ALOG_ASSERT(mEncoderTaskRunner->RunsTasksInCurrentSequence());
 
@@ -452,6 +399,8 @@ void V4L2EncodeComponent::stopTask(::base::WaitableEvent* done) {
     flush();
 
     mInputFormatConverter.reset();
+    mInputPixelFormat = VideoPixelFormat::UNKNOWN;
+    mInputLayout.clear();
 
     mEncoder.reset();
     mOutputBlockPool.reset();
@@ -462,7 +411,7 @@ void V4L2EncodeComponent::stopTask(::base::WaitableEvent* done) {
     done->Signal();
 }
 
-void V4L2EncodeComponent::queueTask(std::unique_ptr<C2Work> work) {
+void EncodeComponent::queueTask(std::unique_ptr<C2Work> work) {
     ALOGV("%s()", __func__);
     ALOG_ASSERT(mEncoderTaskRunner->RunsTasksInCurrentSequence());
     ALOG_ASSERT(mEncoder);
@@ -496,6 +445,31 @@ void V4L2EncodeComponent::queueTask(std::unique_ptr<C2Work> work) {
         return;
     }
 
+    // If this is the first input frame, create an input format converter if the V4L2 device doesn't
+    // support the requested input format.
+    if ((mInputPixelFormat == VideoPixelFormat::UNKNOWN) && !work->input.buffers.empty()) {
+        VideoPixelFormat format = VideoPixelFormat::UNKNOWN;
+        if (!getVideoFrameLayout(work->input.buffers.front()->data().graphicBlocks().front(),
+                                 &format)) {
+            ALOGE("Failed to get input block's layout");
+            reportError(C2_CORRUPTED);
+            return;
+        }
+        if (mEncoder->inputFormat() != format) {
+            ALOG_ASSERT(!mInputFormatConverter);
+            ALOGV("Creating input format convertor (%s)",
+                  videoPixelFormatToString(mEncoder->inputFormat()).c_str());
+            mInputFormatConverter =
+                    FormatConverter::create(mEncoder->inputFormat(), mEncoder->visibleSize(),
+                                            VideoEncoder::kInputBufferCount, mEncoder->codedSize());
+            if (!mInputFormatConverter) {
+                ALOGE("Failed to created input format convertor");
+                reportError(C2_CORRUPTED);
+                return;
+            }
+        }
+    }
+
     // If conversion is required but no free buffers are available we queue the work item.
     if (mInputFormatConverter && !mInputFormatConverter->isReady()) {
         ALOGV("Input format convertor ran out of buffers");
@@ -510,8 +484,8 @@ void V4L2EncodeComponent::queueTask(std::unique_ptr<C2Work> work) {
                 work->input.buffers.front()->data().graphicBlocks().front();
         if (mInputFormatConverter) {
             ALOGV("Converting input block (index: %" PRIu64 ")", index);
-            c2_status_t status = C2_CORRUPTED;
-            inputBlock = mInputFormatConverter->convertBlock(index, inputBlock, &status);
+            c2_status_t status =
+                    mInputFormatConverter->convertBlock(index, inputBlock, &inputBlock);
             if (status != C2_OK) {
                 ALOGE("Failed to convert input block (index: %" PRIu64 ")", index);
                 reportError(status);
@@ -555,7 +529,7 @@ void V4L2EncodeComponent::queueTask(std::unique_ptr<C2Work> work) {
     }
 }
 
-void V4L2EncodeComponent::drainTask(drain_mode_t /*drainMode*/) {
+void EncodeComponent::drainTask(drain_mode_t /*drainMode*/) {
     ALOGV("%s()", __func__);
     ALOG_ASSERT(mEncoderTaskRunner->RunsTasksInCurrentSequence());
 
@@ -579,7 +553,7 @@ void V4L2EncodeComponent::drainTask(drain_mode_t /*drainMode*/) {
     }
 }
 
-void V4L2EncodeComponent::onDrainDone(bool success) {
+void EncodeComponent::onDrainDone(bool success) {
     ALOGV("%s()", __func__);
     ALOG_ASSERT(mEncoderTaskRunner->RunsTasksInCurrentSequence());
     ALOG_ASSERT(!mWorkQueue.empty());
@@ -618,8 +592,8 @@ void V4L2EncodeComponent::onDrainDone(bool success) {
     mWorkQueue.pop_front();
 }
 
-void V4L2EncodeComponent::flushTask(::base::WaitableEvent* done,
-                                    std::list<std::unique_ptr<C2Work>>* const flushedWork) {
+void EncodeComponent::flushTask(::base::WaitableEvent* done,
+                                std::list<std::unique_ptr<C2Work>>* const flushedWork) {
     ALOGV("%s()", __func__);
     ALOG_ASSERT(mEncoderTaskRunner->RunsTasksInCurrentSequence());
 
@@ -637,8 +611,8 @@ void V4L2EncodeComponent::flushTask(::base::WaitableEvent* done,
     flush();
 }
 
-void V4L2EncodeComponent::setListenerTask(const std::shared_ptr<Listener>& listener,
-                                          ::base::WaitableEvent* done) {
+void EncodeComponent::setListenerTask(const std::shared_ptr<Listener>& listener,
+                                      ::base::WaitableEvent* done) {
     ALOGV("%s()", __func__);
     ALOG_ASSERT(mEncoderTaskRunner->RunsTasksInCurrentSequence());
 
@@ -646,76 +620,7 @@ void V4L2EncodeComponent::setListenerTask(const std::shared_ptr<Listener>& liste
     done->Signal();
 }
 
-bool V4L2EncodeComponent::initializeEncoder() {
-    ALOGV("%s()", __func__);
-    ALOG_ASSERT(mEncoderTaskRunner->RunsTasksInCurrentSequence());
-    ALOG_ASSERT(!mInputFormatConverter);
-    ALOG_ASSERT(!mEncoder);
-
-    mLastFrameTime = std::nullopt;
-
-    // Get the requested profile and level.
-    C2Config::profile_t outputProfile = mInterface->getOutputProfile();
-
-    // CSD only needs to be extracted when using an H.264 profile.
-    mExtractCSD = IsH264Profile(outputProfile);
-
-    std::optional<uint8_t> h264Level;
-    if (IsH264Profile(outputProfile)) {
-        h264Level = c2LevelToV4L2Level(mInterface->getOutputLevel());
-    }
-
-    // Get the stride used by the C2 framework, as this might be different from the stride used by
-    // the V4L2 encoder.
-    std::optional<uint32_t> stride =
-            getVideoFrameStride(kInputPixelFormat, mInterface->getInputVisibleSize());
-    if (!stride) {
-        ALOGE("Failed to get video frame stride");
-        reportError(C2_CORRUPTED);
-        return false;
-    }
-
-    // Get the requested bitrate mode and bitrate. The C2 framework doesn't offer a parameter to
-    // configure the peak bitrate, so we use a multiple of the target bitrate.
-    mBitrateMode = mInterface->getBitrateMode();
-    if (property_get_bool("persist.vendor.v4l2_codec2.disable_vbr", false)) {
-        // NOTE: This is a workaround for b/235771157.
-        ALOGW("VBR is disabled on this device");
-        mBitrateMode = C2Config::BITRATE_CONST;
-    }
-
-    mBitrate = mInterface->getBitrate();
-
-    mEncoder = V4L2Encoder::create(
-            outputProfile, h264Level, mInterface->getInputVisibleSize(), *stride,
-            mInterface->getKeyFramePeriod(), mBitrateMode, mBitrate,
-            mBitrate * kPeakBitrateMultiplier,
-            ::base::BindRepeating(&V4L2EncodeComponent::fetchOutputBlock, mWeakThis),
-            ::base::BindRepeating(&V4L2EncodeComponent::onInputBufferDone, mWeakThis),
-            ::base::BindRepeating(&V4L2EncodeComponent::onOutputBufferDone, mWeakThis),
-            ::base::BindRepeating(&V4L2EncodeComponent::onDrainDone, mWeakThis),
-            ::base::BindRepeating(&V4L2EncodeComponent::reportError, mWeakThis, C2_CORRUPTED),
-            mEncoderTaskRunner);
-    if (!mEncoder) {
-        ALOGE("Failed to create V4L2Encoder (profile: %s)", profileToString(outputProfile));
-        return false;
-    }
-
-    // Add an input format convertor if the device doesn't support the requested input format.
-    ALOGV("Creating input format convertor (%s)",
-          videoPixelFormatToString(mEncoder->inputFormat()).c_str());
-    mInputFormatConverter =
-            FormatConverter::Create(mEncoder->inputFormat(), mEncoder->visibleSize(),
-                                    V4L2Encoder::kInputBufferCount, mEncoder->codedSize());
-    if (!mInputFormatConverter) {
-        ALOGE("Failed to created input format convertor");
-        return false;
-    }
-
-    return true;
-}
-
-bool V4L2EncodeComponent::updateEncodingParameters() {
+bool EncodeComponent::updateEncodingParameters() {
     ALOGV("%s()", __func__);
     ALOG_ASSERT(mEncoderTaskRunner->RunsTasksInCurrentSequence());
 
@@ -733,10 +638,10 @@ bool V4L2EncodeComponent::updateEncodingParameters() {
         mBitrate = bitrate;
 
         if (mBitrateMode == C2Config::BITRATE_VARIABLE) {
-            ALOGV("Setting peak bitrate to %u", bitrate * kPeakBitrateMultiplier);
+            ALOGV("Setting peak bitrate to %u", bitrate * VideoEncoder::kPeakBitrateMultiplier);
             // TODO(b/190336806): Our stack doesn't support dynamic peak bitrate changes yet, ignore
             // errors for now.
-            mEncoder->setPeakBitrate(bitrate * kPeakBitrateMultiplier);
+            mEncoder->setPeakBitrate(bitrate * VideoEncoder::kPeakBitrateMultiplier);
         }
     }
 
@@ -777,13 +682,28 @@ bool V4L2EncodeComponent::updateEncodingParameters() {
     return true;
 }
 
-bool V4L2EncodeComponent::encode(C2ConstGraphicBlock block, uint64_t index, int64_t timestamp) {
+bool EncodeComponent::encode(C2ConstGraphicBlock block, uint64_t index, int64_t timestamp) {
     ALOGV("%s()", __func__);
     ALOG_ASSERT(mEncoderTaskRunner->RunsTasksInCurrentSequence());
     ALOG_ASSERT(mEncoder);
 
     ALOGV("Encoding input block (index: %" PRIu64 ", timestamp: %" PRId64 ", size: %dx%d)", index,
           timestamp, block.width(), block.height());
+
+    // If this is the first input frame, determine the pixel format and layout.
+    if (mInputPixelFormat == VideoPixelFormat::UNKNOWN) {
+        ALOG_ASSERT(mInputLayout.empty());
+        VideoPixelFormat format = VideoPixelFormat::UNKNOWN;
+        std::optional<std::vector<VideoFramePlane>> inputLayout =
+                getVideoFrameLayout(block, &format);
+        if (!inputLayout) {
+            ALOGE("Failed to get input block's layout");
+            reportError(C2_CORRUPTED);
+            return false;
+        }
+        mInputPixelFormat = format;
+        mInputLayout = std::move(*inputLayout);
+    }
 
     // Dynamically adjust framerate based on the frame's timestamp if required.
     constexpr int64_t kMaxFramerateDiff = 5;
@@ -802,7 +722,8 @@ bool V4L2EncodeComponent::encode(C2ConstGraphicBlock block, uint64_t index, int6
     if (!updateEncodingParameters()) return false;
 
     // Create an input frame from the graphic block.
-    std::unique_ptr<V4L2Encoder::InputFrame> frame = CreateInputFrame(block, index, timestamp);
+    std::unique_ptr<VideoEncoder::InputFrame> frame =
+            createInputFrame(block, mInputPixelFormat, mInputLayout, index, timestamp);
     if (!frame) {
         ALOGE("Failed to create video frame from input block (index: %" PRIu64
               ", timestamp: %" PRId64 ")",
@@ -818,7 +739,7 @@ bool V4L2EncodeComponent::encode(C2ConstGraphicBlock block, uint64_t index, int6
     return true;
 }
 
-void V4L2EncodeComponent::flush() {
+void EncodeComponent::flush() {
     ALOGV("%s()", __func__);
     ALOG_ASSERT(mEncoderTaskRunner->RunsTasksInCurrentSequence());
 
@@ -849,8 +770,7 @@ void V4L2EncodeComponent::flush() {
     }
 }
 
-void V4L2EncodeComponent::fetchOutputBlock(uint32_t size,
-                                           std::unique_ptr<BitstreamBuffer>* buffer) {
+void EncodeComponent::fetchOutputBlock(uint32_t size, std::unique_ptr<BitstreamBuffer>* buffer) {
     ALOGV("Fetching linear block (size: %u)", size);
     std::shared_ptr<C2LinearBlock> block;
     c2_status_t status = mOutputBlockPool->fetchLinearBlock(
@@ -866,7 +786,7 @@ void V4L2EncodeComponent::fetchOutputBlock(uint32_t size,
     *buffer = std::make_unique<BitstreamBuffer>(std::move(block), 0, size);
 }
 
-void V4L2EncodeComponent::onInputBufferDone(uint64_t index) {
+void EncodeComponent::onInputBufferDone(uint64_t index) {
     ALOGV("%s(): Input buffer done (index: %" PRIu64 ")", __func__, index);
     ALOG_ASSERT(mEncoderTaskRunner->RunsTasksInCurrentSequence());
     ALOG_ASSERT(mEncoder);
@@ -908,8 +828,8 @@ void V4L2EncodeComponent::onInputBufferDone(uint64_t index) {
     }
 }
 
-void V4L2EncodeComponent::onOutputBufferDone(size_t dataSize, int64_t timestamp, bool keyFrame,
-                                             std::unique_ptr<BitstreamBuffer> buffer) {
+void EncodeComponent::onOutputBufferDone(size_t dataSize, int64_t timestamp, bool keyFrame,
+                                         std::unique_ptr<BitstreamBuffer> buffer) {
     ALOGV("%s(): output buffer done (timestamp: %" PRId64 ", size: %zu, keyframe: %d)", __func__,
           timestamp, dataSize, keyFrame);
     ALOG_ASSERT(mEncoderTaskRunner->RunsTasksInCurrentSequence());
@@ -971,7 +891,7 @@ void V4L2EncodeComponent::onOutputBufferDone(size_t dataSize, int64_t timestamp,
     }
 }
 
-C2Work* V4L2EncodeComponent::getWorkByIndex(uint64_t index) {
+C2Work* EncodeComponent::getWorkByIndex(uint64_t index) {
     ALOGV("%s(): getting work item (index: %" PRIu64 ")", __func__, index);
     ALOG_ASSERT(mEncoderTaskRunner->RunsTasksInCurrentSequence());
 
@@ -986,7 +906,7 @@ C2Work* V4L2EncodeComponent::getWorkByIndex(uint64_t index) {
     return it->get();
 }
 
-C2Work* V4L2EncodeComponent::getWorkByTimestamp(int64_t timestamp) {
+C2Work* EncodeComponent::getWorkByTimestamp(int64_t timestamp) {
     ALOGV("%s(): getting work item (timestamp: %" PRId64 ")", __func__, timestamp);
     ALOG_ASSERT(mEncoderTaskRunner->RunsTasksInCurrentSequence());
     ALOG_ASSERT(timestamp >= 0);
@@ -1006,7 +926,7 @@ C2Work* V4L2EncodeComponent::getWorkByTimestamp(int64_t timestamp) {
     return it->get();
 }
 
-bool V4L2EncodeComponent::isWorkDone(const C2Work& work) const {
+bool EncodeComponent::isWorkDone(const C2Work& work) const {
     ALOGV("%s()", __func__);
     ALOG_ASSERT(mEncoderTaskRunner->RunsTasksInCurrentSequence());
 
@@ -1033,7 +953,7 @@ bool V4L2EncodeComponent::isWorkDone(const C2Work& work) const {
     return true;
 }
 
-void V4L2EncodeComponent::reportWork(std::unique_ptr<C2Work> work) {
+void EncodeComponent::reportWork(std::unique_ptr<C2Work> work) {
     ALOG_ASSERT(work);
     ALOGV("%s(): Reporting work item as finished (index: %llu, timestamp: %llu)", __func__,
           work->input.ordinal.frameIndex.peekull(), work->input.ordinal.timestamp.peekull());
@@ -1047,7 +967,7 @@ void V4L2EncodeComponent::reportWork(std::unique_ptr<C2Work> work) {
     mListener->onWorkDone_nb(weak_from_this(), std::move(finishedWorkList));
 }
 
-bool V4L2EncodeComponent::getBlockPool() {
+bool EncodeComponent::getBlockPool() {
     ALOG_ASSERT(mEncoderTaskRunner->RunsTasksInCurrentSequence());
 
     auto sharedThis = weak_from_this().lock();
@@ -1068,7 +988,7 @@ bool V4L2EncodeComponent::getBlockPool() {
     return true;
 }
 
-void V4L2EncodeComponent::reportError(c2_status_t error) {
+void EncodeComponent::reportError(c2_status_t error) {
     ALOGV("%s()", __func__);
     ALOG_ASSERT(mEncoderTaskRunner->RunsTasksInCurrentSequence());
 
@@ -1080,7 +1000,7 @@ void V4L2EncodeComponent::reportError(c2_status_t error) {
     }
 }
 
-void V4L2EncodeComponent::setComponentState(ComponentState state) {
+void EncodeComponent::setComponentState(ComponentState state) {
     // Check whether the state change is valid.
     switch (state) {
     case ComponentState::UNLOADED:
@@ -1103,7 +1023,7 @@ void V4L2EncodeComponent::setComponentState(ComponentState state) {
     mComponentState = state;
 }
 
-const char* V4L2EncodeComponent::componentStateToString(V4L2EncodeComponent::ComponentState state) {
+const char* EncodeComponent::componentStateToString(EncodeComponent::ComponentState state) {
     switch (state) {
     case ComponentState::UNLOADED:
         return "UNLOADED";

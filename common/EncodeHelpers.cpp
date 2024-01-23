@@ -14,7 +14,7 @@
 #include <ui/GraphicBuffer.h>
 #include <utils/Log.h>
 
-#include <v4l2_codec2/common/NalParser.h>
+#include <v4l2_codec2/common/H264NalParser.h>
 
 namespace android {
 
@@ -114,15 +114,15 @@ bool extractSPSPPS(const uint8_t* data, size_t length, std::vector<uint8_t>* sps
                    std::vector<uint8_t>* pps) {
     bool foundSPS = false;
     bool foundPPS = false;
-    NalParser parser(data, length);
+    H264NalParser parser(data, length);
     while (!(foundSPS && foundPPS) && parser.locateNextNal()) {
         switch (parser.type()) {
-        case NalParser::kSPSType:
+        case H264NalParser::kSPSType:
             sps->resize(parser.length());
             memcpy(sps->data(), parser.data(), parser.length());
             foundSPS = true;
             break;
-        case NalParser::kPPSType:
+        case H264NalParser::kPPSType:
             pps->resize(parser.length());
             memcpy(pps->data(), parser.data(), parser.length());
             foundPPS = true;
@@ -155,24 +155,24 @@ size_t prependSPSPPSToIDR(const uint8_t* src, size_t srcSize, uint8_t* dst, size
                           std::vector<uint8_t>* sps, std::vector<uint8_t>* pps) {
     bool foundStreamParams = false;
     size_t remainingDstSize = dstSize;
-    NalParser parser(src, srcSize);
+    H264NalParser parser(src, srcSize);
     while (parser.locateNextNal()) {
         switch (parser.type()) {
-        case NalParser::kSPSType:
+        case H264NalParser::kSPSType:
             // SPS found, copy to cache.
             ALOGV("Found SPS (length %zu)", parser.length());
             sps->resize(parser.length());
             memcpy(sps->data(), parser.data(), parser.length());
             foundStreamParams = true;
             break;
-        case NalParser::kPPSType:
+        case H264NalParser::kPPSType:
             // PPS found, copy to cache.
             ALOGV("Found PPS (length %zu)", parser.length());
             pps->resize(parser.length());
             memcpy(pps->data(), parser.data(), parser.length());
             foundStreamParams = true;
             break;
-        case NalParser::kIDRType:
+        case H264NalParser::kIDRType:
             ALOGV("Found IDR (length %zu)", parser.length());
             if (foundStreamParams) {
                 ALOGV("Not injecting SPS and PPS before IDR, already present");
