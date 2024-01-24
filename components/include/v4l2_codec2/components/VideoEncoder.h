@@ -47,13 +47,13 @@ public:
     };
 
     using FetchOutputBufferCB =
-            base::RepeatingCallback<void(uint32_t, std::unique_ptr<BitstreamBuffer>* buffer)>;
+            ::base::RepeatingCallback<void(uint32_t, std::unique_ptr<BitstreamBuffer>* buffer)>;
     // TODO(dstaessens): Change callbacks to OnceCallback provided when requesting encode/drain.
-    using InputBufferDoneCB = base::RepeatingCallback<void(uint64_t)>;
-    using OutputBufferDoneCB = base::RepeatingCallback<void(
+    using InputBufferDoneCB = ::base::RepeatingCallback<void(uint64_t)>;
+    using OutputBufferDoneCB = ::base::RepeatingCallback<void(
             size_t, int64_t, bool, std::unique_ptr<BitstreamBuffer> buffer)>;
-    using DrainDoneCB = base::RepeatingCallback<void(bool)>;
-    using ErrorCB = base::RepeatingCallback<void()>;
+    using DrainDoneCB = ::base::RepeatingCallback<void(bool)>;
+    using ErrorCB = ::base::RepeatingCallback<void()>;
 
     virtual ~VideoEncoder() = default;
 

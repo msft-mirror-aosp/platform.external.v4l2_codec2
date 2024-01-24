@@ -30,7 +30,6 @@
 #include <v4l2_codec2/components/BitstreamBuffer.h>
 #include <v4l2_codec2/components/V4L2Decoder.h>
 #include <v4l2_codec2/components/VideoFramePool.h>
-#include <v4l2_codec2/plugin_store/C2VdaBqBlockPool.h>
 
 namespace android {
 namespace {
