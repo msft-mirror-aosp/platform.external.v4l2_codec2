@@ -1,9 +1,9 @@
-// Copyright 2020 The Chromium Authors. All rights reserved.
+// Copyright 2023 The Chromium Authors. All rights reserved.
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#ifndef ANDROID_V4L2_CODEC2_COMPONENTS_V4L2_COMPONENT_STORE_H
-#define ANDROID_V4L2_CODEC2_COMPONENTS_V4L2_COMPONENT_STORE_H
+#ifndef ANDROID_V4L2_CODEC2_COMPONENTS_COMPONENT_STORE_MIXIN_H
+#define ANDROID_V4L2_CODEC2_COMPONENTS_COMPONENT_STORE_MIXIN_H
 
 #include <map>
 #include <mutex>
@@ -15,10 +15,15 @@
 
 namespace android {
 
-class V4L2ComponentStore : public C2ComponentStore {
+enum class VideoCodec;
+
+class ComponentStore : public C2ComponentStore {
 public:
-    static std::shared_ptr<C2ComponentStore> Create();
-    ~V4L2ComponentStore();
+    using GetFactory = std::function<std::unique_ptr<C2ComponentFactory>(
+            const std::string& /* name */, std::shared_ptr<C2ReflectorHelper>)>;
+    class Builder;
+
+    virtual ~ComponentStore();
 
     // C2ComponentStore implementation.
     C2String getName() const override;
@@ -41,10 +46,21 @@ public:
             std::vector<C2FieldSupportedValuesQuery>& fields) const override;
 
 private:
-    V4L2ComponentStore();
+    struct Declaration {
+        VideoCodec codec;
+        C2Component::kind_t kind;
+        GetFactory factory;
+    };
 
-    ::C2ComponentFactory* GetFactory(const C2String& name);
-    std::shared_ptr<const C2Component::Traits> GetTraits(const C2String& name);
+    ComponentStore(C2String storeName);
+
+    ::C2ComponentFactory* getFactory(const C2String& name);
+
+    std::shared_ptr<const C2Component::Traits> getTraits(const C2String& name);
+
+    C2String mStoreName;
+
+    std::map<std::string, Declaration> mDeclarations;
 
     std::shared_ptr<C2ReflectorHelper> mReflector;
 
@@ -54,8 +70,25 @@ private:
     std::mutex mCachedTraitsLock;
     std::map<C2String, std::shared_ptr<const C2Component::Traits>> mCachedTraits
             GUARDED_BY(mCachedTraitsLock);
+
+    friend class Builder;
+};
+
+class ComponentStore::Builder final {
+public:
+    Builder(C2String storeName);
+    ~Builder() = default;
+
+    Builder& decoder(std::string name, VideoCodec codec, GetFactory factory);
+
+    Builder& encoder(std::string name, VideoCodec codec, GetFactory factory);
+
+    std::shared_ptr<ComponentStore> build() &&;
+
+private:
+    std::unique_ptr<ComponentStore> mStore;
 };
 
 }  // namespace android
 
-#endif  // ANDROID_V4L2_CODEC2_COMPONENTS_V4L2_COMPONENT_STORE_H
+#endif  // ANDROID_V4L2_CODEC2_COMPONENTS_COMPONENT_STORE_MIXIN_H

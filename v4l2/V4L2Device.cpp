@@ -6,9 +6,11 @@
 //       versions (e.g. V4L2_PIX_FMT_VP8_FRAME)
 
 //#define LOG_NDEBUG 0
+#define ATRACE_TAG ATRACE_TAG_VIDEO
 #define LOG_TAG "V4L2Device"
 
-#include <v4l2_codec2/common/V4L2Device.h>
+#include <linux/v4l2-controls.h>
+#include <v4l2_codec2/v4l2/V4L2Device.h>
 
 #include <fcntl.h>
 #include <inttypes.h>
@@ -19,6 +21,7 @@
 #include <sys/eventfd.h>
 #include <sys/ioctl.h>
 #include <sys/mman.h>
+#include <utils/Trace.h>
 
 #include <algorithm>
 #include <mutex>
@@ -35,27 +38,31 @@
 #include <v4l2_codec2/common/Fourcc.h>
 #include <v4l2_codec2/common/VideoPixelFormat.h>
 
-// VP8 parsed frames
-#ifndef V4L2_PIX_FMT_VP8_FRAME
-#define V4L2_PIX_FMT_VP8_FRAME v4l2_fourcc('V', 'P', '8', 'F')
-#endif
-
-// VP9 parsed frames
-#ifndef V4L2_PIX_FMT_VP9_FRAME
-#define V4L2_PIX_FMT_VP9_FRAME v4l2_fourcc('V', 'P', '9', 'F')
-#endif
-
-// H264 parsed slices
-#ifndef V4L2_PIX_FMT_H264_SLICE
-#define V4L2_PIX_FMT_H264_SLICE v4l2_fourcc('S', '2', '6', '4')
-#endif
-
-// HEVC parsed slices
-#ifndef V4L2_PIX_FMT_HEVC_SLICE
-#define V4L2_PIX_FMT_HEVC_SLICE v4l2_fourcc('S', '2', '6', '5')
-#endif
-
 namespace android {
+
+bool isValidPixFmtForCodec(VideoCodec codec, uint32_t pixFmt) {
+    switch (pixFmt) {
+    case V4L2_PIX_FMT_H264:
+    case V4L2_PIX_FMT_H264_SLICE:
+        return codec == VideoCodec::H264;
+        break;
+    case V4L2_PIX_FMT_VP8:
+    case V4L2_PIX_FMT_VP8_FRAME:
+        return codec == VideoCodec::VP8;
+        break;
+    case V4L2_PIX_FMT_VP9:
+    case V4L2_PIX_FMT_VP9_FRAME:
+        return codec == VideoCodec::VP9;
+        break;
+    case V4L2_PIX_FMT_HEVC:
+    case V4L2_PIX_FMT_HEVC_SLICE:
+        return codec == VideoCodec::HEVC;
+        break;
+    default:
+        ALOGE("Unhandled pixelformat %s", fourccToString(pixFmt).c_str());
+        return false;
+    }
+}
 
 struct v4l2_format buildV4L2Format(const enum v4l2_buf_type type, uint32_t fourcc,
                                    const ui::Size& size, size_t buffer_size, uint32_t stride) {
@@ -727,6 +734,7 @@ V4L2Queue::~V4L2Queue() {
 
 std::optional<struct v4l2_format> V4L2Queue::setFormat(uint32_t fourcc, const ui::Size& size,
                                                        size_t bufferSize, uint32_t stride) {
+    ATRACE_CALL();
     struct v4l2_format format = buildV4L2Format(mType, fourcc, size, bufferSize, stride);
     if (mDevice->ioctl(VIDIOC_S_FMT, &format) != 0 || format.fmt.pix_mp.pixelformat != fourcc) {
         ALOGEQ("Failed to set format (format_fourcc=0x%" PRIx32 ")", fourcc);
@@ -761,6 +769,7 @@ std::pair<std::optional<struct v4l2_format>, int> V4L2Queue::getFormat() {
 }
 
 size_t V4L2Queue::allocateBuffers(size_t count, enum v4l2_memory memory) {
+    ATRACE_CALL();
     DCHECK_CALLED_ON_VALID_SEQUENCE(mSequenceChecker);
     ALOG_ASSERT(!mFreeBuffers);
     ALOG_ASSERT(mQueuedBuffers.size() == 0u);
@@ -827,6 +836,7 @@ size_t V4L2Queue::allocateBuffers(size_t count, enum v4l2_memory memory) {
     ALOG_ASSERT(mFreeBuffers);
     ALOG_ASSERT(mFreeBuffers->size() == mBuffers.size());
     ALOG_ASSERT(mQueuedBuffers.size() == 0u);
+    reportTraceMetrics();
 
     return mBuffers.size();
 }
@@ -860,6 +870,7 @@ bool V4L2Queue::deallocateBuffers() {
 
     ALOG_ASSERT(!mFreeBuffers);
     ALOG_ASSERT(mQueuedBuffers.size() == 0u);
+    reportTraceMetrics();
 
     return true;
 }
@@ -903,6 +914,29 @@ std::optional<V4L2WritableBufferRef> V4L2Queue::getFreeBuffer(size_t requestedBu
                                                    mWeakThisFactory.GetWeakPtr());
 }
 
+void V4L2Queue::reportTraceMetrics() {
+    // Don't printf labels if ATrace is not enabled
+    if (!ATRACE_ENABLED()) return;
+
+    std::string atraceLabel;
+
+    atraceLabel =
+            V4L2Device::v4L2BufferTypeToATraceLabel(mDevice->getDebugStreamId(), mType, "streamon");
+    ATRACE_INT(atraceLabel.c_str(), isStreaming());
+
+    atraceLabel = V4L2Device::v4L2BufferTypeToATraceLabel(mDevice->getDebugStreamId(), mType,
+                                                          "buffers free");
+    ATRACE_INT64(atraceLabel.c_str(), freeBuffersCount());
+
+    atraceLabel = V4L2Device::v4L2BufferTypeToATraceLabel(mDevice->getDebugStreamId(), mType,
+                                                          "buffers queued");
+    ATRACE_INT64(atraceLabel.c_str(), queuedBuffersCount());
+
+    atraceLabel = V4L2Device::v4L2BufferTypeToATraceLabel(mDevice->getDebugStreamId(), mType,
+                                                          "buffers allocated");
+    ATRACE_INT64(atraceLabel.c_str(), allocatedBuffersCount());
+}
+
 bool V4L2Queue::queueBuffer(struct v4l2_buffer* v4l2Buffer) {
     DCHECK_CALLED_ON_VALID_SEQUENCE(mSequenceChecker);
 
@@ -912,6 +946,12 @@ bool V4L2Queue::queueBuffer(struct v4l2_buffer* v4l2Buffer) {
         return false;
     }
 
+    if (ATRACE_ENABLED()) {
+        std::string atraceLabel = V4L2Device::v4L2BufferTypeToATraceLabel(
+                mDevice->getDebugStreamId(), mType, "enqueued buffer");
+        ATRACE_ASYNC_BEGIN(atraceLabel.c_str(), v4l2Buffer->index);
+    }
+
     auto inserted = mQueuedBuffers.emplace(v4l2Buffer->index);
     if (!inserted.second) {
         ALOGE("Queuing buffer failed");
@@ -919,6 +959,8 @@ bool V4L2Queue::queueBuffer(struct v4l2_buffer* v4l2Buffer) {
     }
 
     mDevice->schedulePoll();
+
+    reportTraceMetrics();
 
     return true;
 }
@@ -961,11 +1003,19 @@ std::pair<bool, V4L2ReadableBufferRef> V4L2Queue::dequeueBuffer() {
         }
     }
 
+    if (ATRACE_ENABLED()) {
+        std::string atraceLabel = V4L2Device::v4L2BufferTypeToATraceLabel(
+                mDevice->getDebugStreamId(), mType, "enqueued buffer");
+        ATRACE_ASYNC_END(atraceLabel.c_str(), v4l2Buffer.index);
+    }
+
     auto it = mQueuedBuffers.find(v4l2Buffer.index);
     ALOG_ASSERT(it != mQueuedBuffers.end());
     mQueuedBuffers.erase(*it);
 
     if (queuedBuffersCount() > 0) mDevice->schedulePoll();
+
+    reportTraceMetrics();
 
     ALOG_ASSERT(mFreeBuffers);
     return std::make_pair(true, V4L2BufferRefFactory::CreateReadableRef(
@@ -991,6 +1041,7 @@ bool V4L2Queue::streamon() {
     }
 
     mIsStreaming = true;
+    reportTraceMetrics();
 
     return true;
 }
@@ -1017,6 +1068,8 @@ bool V4L2Queue::streamoff() {
     mQueuedBuffers.clear();
 
     mIsStreaming = false;
+
+    reportTraceMetrics();
 
     return true;
 }
@@ -1053,7 +1106,7 @@ public:
     }
 };
 
-V4L2Device::V4L2Device() {
+V4L2Device::V4L2Device(uint32_t debugStreamId) : mDebugStreamId(debugStreamId) {
     DETACH_FROM_SEQUENCE(mClientSequenceChecker);
 }
 
@@ -1095,9 +1148,9 @@ void V4L2Device::onQueueDestroyed(v4l2_buf_type bufType) {
 }
 
 // static
-scoped_refptr<V4L2Device> V4L2Device::create() {
+scoped_refptr<V4L2Device> V4L2Device::create(uint32_t debugStreamId) {
     ALOGV("%s()", __func__);
-    return scoped_refptr<V4L2Device>(new V4L2Device());
+    return scoped_refptr<V4L2Device>(new V4L2Device(debugStreamId));
 }
 
 bool V4L2Device::open(Type type, uint32_t v4l2PixFmt) {
@@ -1130,7 +1183,7 @@ int V4L2Device::ioctl(int request, void* arg) {
     return HANDLE_EINTR(::ioctl(mDeviceFd.get(), request, arg));
 }
 
-bool V4L2Device::poll(bool pollDevice, bool* eventPending) {
+bool V4L2Device::poll(bool pollDevice, bool pollBuffers, bool* eventPending, bool* buffersPending) {
     struct pollfd pollfds[2];
     nfds_t nfds;
     int pollfd = -1;
@@ -1142,7 +1195,11 @@ bool V4L2Device::poll(bool pollDevice, bool* eventPending) {
     if (pollDevice) {
         ALOGV("adding device fd to poll() set");
         pollfds[nfds].fd = mDeviceFd.get();
-        pollfds[nfds].events = POLLIN | POLLOUT | POLLERR | POLLPRI;
+        pollfds[nfds].events = POLLERR | POLLPRI;
+        if (pollBuffers) {
+            ALOGV("will poll buffers");
+            pollfds[nfds].events |= POLLIN | POLLOUT;
+        }
         pollfd = nfds;
         nfds++;
     }
@@ -1152,6 +1209,7 @@ bool V4L2Device::poll(bool pollDevice, bool* eventPending) {
         return false;
     }
     *eventPending = (pollfd != -1 && pollfds[pollfd].revents & POLLPRI);
+    *buffersPending = (pollfd != -1 && pollfds[pollfd].revents & (POLLIN | POLLOUT));
     return true;
 }
 
@@ -1222,7 +1280,7 @@ std::vector<uint32_t> V4L2Device::preferredInputFormat(Type type) {
 }
 
 // static
-uint32_t V4L2Device::C2ProfileToV4L2PixFmt(C2Config::profile_t profile, bool sliceBased) {
+uint32_t V4L2Device::c2ProfileToV4L2PixFmt(C2Config::profile_t profile, bool sliceBased) {
     if (profile >= C2Config::PROFILE_AVC_BASELINE &&
         profile <= C2Config::PROFILE_AVC_ENHANCED_MULTIVIEW_DEPTH_HIGH) {
         if (sliceBased) {
@@ -1256,13 +1314,159 @@ uint32_t V4L2Device::C2ProfileToV4L2PixFmt(C2Config::profile_t profile, bool sli
 }
 
 // static
+C2Config::level_t V4L2Device::v4L2LevelToC2Level(VideoCodec codec, uint32_t level) {
+    switch (codec) {
+    case VideoCodec::H264:
+        switch (level) {
+        case V4L2_MPEG_VIDEO_H264_LEVEL_1_0:
+            return C2Config::LEVEL_AVC_1;
+        case V4L2_MPEG_VIDEO_H264_LEVEL_1B:
+            return C2Config::LEVEL_AVC_1B;
+        case V4L2_MPEG_VIDEO_H264_LEVEL_1_1:
+            return C2Config::LEVEL_AVC_1_1;
+        case V4L2_MPEG_VIDEO_H264_LEVEL_1_2:
+            return C2Config::LEVEL_AVC_1_2;
+        case V4L2_MPEG_VIDEO_H264_LEVEL_1_3:
+            return C2Config::LEVEL_AVC_1_3;
+        case V4L2_MPEG_VIDEO_H264_LEVEL_2_0:
+            return C2Config::LEVEL_AVC_2;
+        case V4L2_MPEG_VIDEO_H264_LEVEL_2_1:
+            return C2Config::LEVEL_AVC_2_1;
+        case V4L2_MPEG_VIDEO_H264_LEVEL_2_2:
+            return C2Config::LEVEL_AVC_2_2;
+        case V4L2_MPEG_VIDEO_H264_LEVEL_3_0:
+            return C2Config::LEVEL_AVC_3;
+        case V4L2_MPEG_VIDEO_H264_LEVEL_3_1:
+            return C2Config::LEVEL_AVC_3_1;
+        case V4L2_MPEG_VIDEO_H264_LEVEL_3_2:
+            return C2Config::LEVEL_AVC_3_2;
+        case V4L2_MPEG_VIDEO_H264_LEVEL_4_0:
+            return C2Config::LEVEL_AVC_4;
+        case V4L2_MPEG_VIDEO_H264_LEVEL_4_1:
+            return C2Config::LEVEL_AVC_4_1;
+        case V4L2_MPEG_VIDEO_H264_LEVEL_4_2:
+            return C2Config::LEVEL_AVC_4_2;
+        case V4L2_MPEG_VIDEO_H264_LEVEL_5_0:
+            return C2Config::LEVEL_AVC_5;
+#ifdef V4L2_MPEG_VIDEO_H264_LEVEL_5_1
+        case V4L2_MPEG_VIDEO_H264_LEVEL_5_1:
+            return C2Config::LEVEL_AVC_5_1;
+#endif
+#ifdef V4L2_MPEG_VIDEO_H264_LEVEL_5_2
+        case V4L2_MPEG_VIDEO_H264_LEVEL_5_2:
+            return C2Config::LEVEL_AVC_5_2;
+#endif
+#ifdef V4L2_MPEG_VIDEO_H264_LEVEL_6_0
+        case V4L2_MPEG_VIDEO_H264_LEVEL_6_0:
+            return C2Config::LEVEL_AVC_6;
+#endif
+#ifdef V4L2_MPEG_VIDEO_H264_LEVEL_6_1
+        case V4L2_MPEG_VIDEO_H264_LEVEL_6_1:
+            return C2Config::LEVEL_AVC_6_1;
+#endif
+#ifdef V4L2_MPEG_VIDEO_H264_LEVEL_6_2
+        case V4L2_MPEG_VIDEO_H264_LEVEL_6_2:
+            return C2Config::LEVEL_AVC_6_2;
+#endif
+        }
+        break;
+    case VideoCodec::VP8:
+        return C2Config::LEVEL_UNUSED;
+        break;
+    case VideoCodec::VP9:
+        switch (level) {
+#ifdef V4L2_MPEG_VIDEO_VP9_LEVEL_1_0
+        case V4L2_MPEG_VIDEO_VP9_LEVEL_1_0:
+            return C2Config::LEVEL_VP9_1;
+        case V4L2_MPEG_VIDEO_VP9_LEVEL_1_1:
+            return C2Config::LEVEL_VP9_1_1;
+        case V4L2_MPEG_VIDEO_VP9_LEVEL_2_0:
+            return C2Config::LEVEL_VP9_2;
+        case V4L2_MPEG_VIDEO_VP9_LEVEL_2_1:
+            return C2Config::LEVEL_VP9_2_1;
+        case V4L2_MPEG_VIDEO_VP9_LEVEL_3_0:
+            return C2Config::LEVEL_VP9_3;
+        case V4L2_MPEG_VIDEO_VP9_LEVEL_3_1:
+            return C2Config::LEVEL_VP9_3_1;
+        case V4L2_MPEG_VIDEO_VP9_LEVEL_4_0:
+            return C2Config::LEVEL_VP9_4;
+        case V4L2_MPEG_VIDEO_VP9_LEVEL_4_1:
+            return C2Config::LEVEL_VP9_4_1;
+#ifdef V4L2_MPEG_VIDEO_VP9_LEVEL_5_0
+        case V4L2_MPEG_VIDEO_VP9_LEVEL_5_0:
+            return C2Config::LEVEL_VP9_5;
+#endif
+#ifdef V4L2_MPEG_VIDEO_VP9_LEVEL_5_1
+        case V4L2_MPEG_VIDEO_VP9_LEVEL_5_1:
+            return C2Config::LEVEL_VP9_5_1;
+#endif
+#ifdef V4L2_MPEG_VIDEO_VP9_LEVEL_5_2
+        case V4L2_MPEG_VIDEO_VP9_LEVEL_5_2:
+            return C2Config::LEVEL_VP9_5_2;
+#endif
+#ifdef V4L2_MPEG_VIDEO_VP9_LEVEL_6_0
+        case V4L2_MPEG_VIDEO_VP9_LEVEL_6_0:
+            return C2Config::LEVEL_VP9_6;
+#endif
+#ifdef V4L2_MPEG_VIDEO_VP9_LEVEL_6_1
+        case V4L2_MPEG_VIDEO_VP9_LEVEL_6_1:
+            return C2Config::LEVEL_VP9_6_1;
+#endif
+#ifdef V4L2_MPEG_VIDEO_VP9_LEVEL_6_2
+        case V4L2_MPEG_VIDEO_VP9_LEVEL_6_2:
+            return C2Config::LEVEL_VP9_6_2;
+#endif
+#endif
+        default:
+            return C2Config::LEVEL_UNUSED;
+        }
+        break;
+    case VideoCodec::HEVC:
+        switch (level) {
+        case V4L2_MPEG_VIDEO_HEVC_LEVEL_1:
+            return C2Config::LEVEL_HEVC_MAIN_1;
+        case V4L2_MPEG_VIDEO_HEVC_LEVEL_2:
+            return C2Config::LEVEL_HEVC_MAIN_2;
+        case V4L2_MPEG_VIDEO_HEVC_LEVEL_2_1:
+            return C2Config::LEVEL_HEVC_MAIN_2_1;
+        case V4L2_MPEG_VIDEO_HEVC_LEVEL_3:
+            return C2Config::LEVEL_HEVC_MAIN_3;
+        case V4L2_MPEG_VIDEO_HEVC_LEVEL_3_1:
+            return C2Config::LEVEL_HEVC_MAIN_3_1;
+        case V4L2_MPEG_VIDEO_HEVC_LEVEL_4:
+            return C2Config::LEVEL_HEVC_MAIN_4;
+        case V4L2_MPEG_VIDEO_HEVC_LEVEL_4_1:
+            return C2Config::LEVEL_HEVC_MAIN_4_1;
+        case V4L2_MPEG_VIDEO_HEVC_LEVEL_5:
+            return C2Config::LEVEL_HEVC_MAIN_5;
+        case V4L2_MPEG_VIDEO_HEVC_LEVEL_5_1:
+            return C2Config::LEVEL_HEVC_MAIN_5_1;
+        case V4L2_MPEG_VIDEO_HEVC_LEVEL_5_2:
+            return C2Config::LEVEL_HEVC_MAIN_5_2;
+        case V4L2_MPEG_VIDEO_HEVC_LEVEL_6:
+            return C2Config::LEVEL_HEVC_MAIN_6;
+        case V4L2_MPEG_VIDEO_HEVC_LEVEL_6_1:
+            return C2Config::LEVEL_HEVC_MAIN_6_1;
+        case V4L2_MPEG_VIDEO_HEVC_LEVEL_6_2:
+            return C2Config::LEVEL_HEVC_MAIN_6_2;
+        }
+        break;
+    default:
+        ALOGE("Unknown codec: %u", codec);
+    }
+    ALOGE("Unknown level: %u", level);
+    return C2Config::LEVEL_UNUSED;
+}
+
+// static
 C2Config::profile_t V4L2Device::v4L2ProfileToC2Profile(VideoCodec codec, uint32_t profile) {
     switch (codec) {
     case VideoCodec::H264:
         switch (profile) {
         case V4L2_MPEG_VIDEO_H264_PROFILE_BASELINE:
-        case V4L2_MPEG_VIDEO_H264_PROFILE_CONSTRAINED_BASELINE:
             return C2Config::PROFILE_AVC_BASELINE;
+        case V4L2_MPEG_VIDEO_H264_PROFILE_CONSTRAINED_BASELINE:
+            return C2Config::PROFILE_AVC_CONSTRAINED_BASELINE;
         case V4L2_MPEG_VIDEO_H264_PROFILE_MAIN:
             return C2Config::PROFILE_AVC_MAIN;
         case V4L2_MPEG_VIDEO_H264_PROFILE_EXTENDED:
@@ -1312,8 +1516,112 @@ C2Config::profile_t V4L2Device::v4L2ProfileToC2Profile(VideoCodec codec, uint32_
     return C2Config::PROFILE_UNUSED;
 }
 
-std::vector<C2Config::profile_t> V4L2Device::v4L2PixFmtToC2Profiles(uint32_t pixFmt,
-                                                                    bool /*isEncoder*/) {
+// static
+uint32_t V4L2Device::videoCodecToPixFmt(VideoCodec codec) {
+    switch (codec) {
+    case VideoCodec::H264:
+        return V4L2_PIX_FMT_H264;
+    case VideoCodec::VP8:
+        return V4L2_PIX_FMT_VP8;
+    case VideoCodec::VP9:
+        return V4L2_PIX_FMT_VP9;
+    case VideoCodec::HEVC:
+        return V4L2_PIX_FMT_HEVC;
+    }
+}
+
+std::vector<C2Config::level_t> V4L2Device::queryC2Levels(uint32_t pixFmt) {
+    auto getSupportedLevels = [this](VideoCodec codec, std::vector<C2Config::level_t>* levels) {
+        uint32_t queryId = 0;
+        switch (codec) {
+        case VideoCodec::H264:
+            queryId = V4L2_CID_MPEG_VIDEO_H264_LEVEL;
+            break;
+#ifdef V4L2_CID_MPEG_VIDEO_VP9_LEVEL
+        case VideoCodec::VP9:
+            queryId = V4L2_CID_MPEG_VIDEO_VP9_LEVEL;
+            break;
+#endif
+        case VideoCodec::HEVC:
+            queryId = V4L2_CID_MPEG_VIDEO_HEVC_LEVEL;
+            break;
+        default:
+            return false;
+        }
+
+        v4l2_queryctrl queryCtrl = {};
+        queryCtrl.id = queryId;
+        if (ioctl(VIDIOC_QUERYCTRL, &queryCtrl) != 0) {
+            return false;
+        }
+        v4l2_querymenu queryMenu = {};
+        queryMenu.id = queryCtrl.id;
+        for (queryMenu.index = queryCtrl.minimum;
+             static_cast<int>(queryMenu.index) <= queryCtrl.maximum; queryMenu.index++) {
+            if (ioctl(VIDIOC_QUERYMENU, &queryMenu) == 0) {
+                const C2Config::level_t level =
+                        V4L2Device::v4L2LevelToC2Level(codec, queryMenu.index);
+                if (level != C2Config::LEVEL_UNUSED) levels->push_back(level);
+            }
+        }
+        return true;
+    };
+
+    std::vector<C2Config::level_t> levels;
+    switch (pixFmt) {
+    case V4L2_PIX_FMT_H264:
+    case V4L2_PIX_FMT_H264_SLICE:
+        if (!getSupportedLevels(VideoCodec::H264, &levels)) {
+            ALOGW("Driver doesn't support QUERY H264 levels, "
+                  "use default values, 1-5_2");
+            levels = {C2Config::LEVEL_AVC_1,   C2Config::LEVEL_AVC_1B,  C2Config::LEVEL_AVC_1_1,
+                      C2Config::LEVEL_AVC_1_2, C2Config::LEVEL_AVC_1_3, C2Config::LEVEL_AVC_2,
+                      C2Config::LEVEL_AVC_2_1, C2Config::LEVEL_AVC_2_2, C2Config::LEVEL_AVC_3,
+                      C2Config::LEVEL_AVC_3_1, C2Config::LEVEL_AVC_3_2, C2Config::LEVEL_AVC_4,
+                      C2Config::LEVEL_AVC_4_1, C2Config::LEVEL_AVC_4_2, C2Config::LEVEL_AVC_5,
+                      C2Config::LEVEL_AVC_5_1, C2Config::LEVEL_AVC_5_2};
+        }
+        break;
+    case V4L2_PIX_FMT_VP8:
+    case V4L2_PIX_FMT_VP8_FRAME:
+        if (!getSupportedLevels(VideoCodec::VP8, &levels)) {
+            ALOGW("Driver doesn't support QUERY VP8 levels, use default values, unused");
+            levels = {C2Config::LEVEL_UNUSED};
+        }
+        break;
+    case V4L2_PIX_FMT_VP9:
+    case V4L2_PIX_FMT_VP9_FRAME:
+        if (!getSupportedLevels(VideoCodec::VP9, &levels)) {
+            ALOGW("Driver doesn't support QUERY VP9 levels, use default values, 1-5");
+            levels = {C2Config::LEVEL_VP9_1,   C2Config::LEVEL_VP9_1_1, C2Config::LEVEL_VP9_2,
+                      C2Config::LEVEL_VP9_2_1, C2Config::LEVEL_VP9_3,   C2Config::LEVEL_VP9_3_1,
+                      C2Config::LEVEL_VP9_4,   C2Config::LEVEL_VP9_4_1, C2Config::LEVEL_VP9_5};
+        }
+        break;
+    case V4L2_PIX_FMT_HEVC:
+    case V4L2_PIX_FMT_HEVC_SLICE:
+        if (!getSupportedLevels(VideoCodec::VP9, &levels)) {
+            ALOGW("Driver doesn't support QUERY HEVC levels, use default values");
+            levels = {C2Config::LEVEL_HEVC_MAIN_1,   C2Config::LEVEL_HEVC_MAIN_2,
+                      C2Config::LEVEL_HEVC_MAIN_2_1, C2Config::LEVEL_HEVC_MAIN_3,
+                      C2Config::LEVEL_HEVC_MAIN_3_1, C2Config::LEVEL_HEVC_MAIN_4,
+                      C2Config::LEVEL_HEVC_MAIN_4_1, C2Config::LEVEL_HEVC_MAIN_5,
+                      C2Config::LEVEL_HEVC_MAIN_5_1, C2Config::LEVEL_HEVC_MAIN_5_2,
+                      C2Config::LEVEL_HEVC_MAIN_6,   C2Config::LEVEL_HEVC_MAIN_6_1,
+                      C2Config::LEVEL_HEVC_MAIN_6_2};
+        }
+        break;
+    default:
+        ALOGE("Unhandled pixelformat %s", fourccToString(pixFmt).c_str());
+        return {};
+    }
+
+    std::sort(levels.begin(), levels.end());
+    levels.erase(std::unique(levels.begin(), levels.end()), levels.end());
+    return levels;
+}
+
+std::vector<C2Config::profile_t> V4L2Device::queryC2Profiles(uint32_t pixFmt) {
     auto getSupportedProfiles = [this](VideoCodec codec,
                                        std::vector<C2Config::profile_t>* profiles) {
         uint32_t queryId = 0;
@@ -1361,6 +1669,7 @@ std::vector<C2Config::profile_t> V4L2Device::v4L2PixFmtToC2Profiles(uint32_t pix
                   "use default values, Base, Main, High");
             profiles = {
                     C2Config::PROFILE_AVC_BASELINE,
+                    C2Config::PROFILE_AVC_CONSTRAINED_BASELINE,
                     C2Config::PROFILE_AVC_MAIN,
                     C2Config::PROFILE_AVC_HIGH,
             };
@@ -1406,6 +1715,8 @@ int32_t V4L2Device::c2ProfileToV4L2H264Profile(C2Config::profile_t profile) {
     switch (profile) {
     case C2Config::PROFILE_AVC_BASELINE:
         return V4L2_MPEG_VIDEO_H264_PROFILE_BASELINE;
+    case C2Config::PROFILE_AVC_CONSTRAINED_BASELINE:
+        return V4L2_MPEG_VIDEO_H264_PROFILE_CONSTRAINED_BASELINE;
     case C2Config::PROFILE_AVC_MAIN:
         return V4L2_MPEG_VIDEO_H264_PROFILE_MAIN;
     case C2Config::PROFILE_AVC_EXTENDED:
@@ -1474,7 +1785,7 @@ int32_t V4L2Device::h264LevelIdcToV4L2H264Level(uint8_t levelIdc) {
 }
 
 // static
-v4l2_mpeg_video_bitrate_mode V4L2Device::C2BitrateModeToV4L2BitrateMode(
+v4l2_mpeg_video_bitrate_mode V4L2Device::c2BitrateModeToV4L2BitrateMode(
         C2Config::bitrate_mode_t bitrateMode) {
     switch (bitrateMode) {
     case C2Config::bitrate_mode_t::BITRATE_CONST_SKIP_ALLOWED:
@@ -1601,6 +1912,30 @@ const char* V4L2Device::v4L2BufferTypeToString(const enum v4l2_buf_type bufType)
     default:
         return "UNKNOWN";
     }
+}
+
+// static
+std::string V4L2Device::v4L2BufferTypeToATraceLabel(uint32_t debugStreamId,
+                                                    const enum v4l2_buf_type type,
+                                                    const char* label) {
+    const char* queueName;
+    switch (type) {
+    case V4L2_BUF_TYPE_VIDEO_CAPTURE:
+        FALLTHROUGH;
+    case V4L2_BUF_TYPE_VIDEO_CAPTURE_MPLANE:
+        queueName = "CAPTURE";
+        break;
+    case V4L2_BUF_TYPE_VIDEO_OUTPUT:
+        FALLTHROUGH;
+    case V4L2_BUF_TYPE_VIDEO_OUTPUT_MPLANE:
+        queueName = "OUTPUT";
+        break;
+    default:
+        queueName = "";
+        break;
+    }
+
+    return base::StringPrintf("#%u V4L2 %s %s", debugStreamId, queueName, label);
 }
 
 // static
@@ -1808,67 +2143,219 @@ std::vector<uint32_t> V4L2Device::enumerateSupportedPixelformats(v4l2_buf_type b
     return pixelFormats;
 }
 
-V4L2Device::SupportedDecodeProfiles V4L2Device::getSupportedDecodeProfiles(
-        const size_t numFormats, const uint32_t pixelFormats[]) {
-    SupportedDecodeProfiles supportedProfiles;
-
+// static
+std::vector<C2Config::level_t> V4L2Device::getSupportedDecodeLevels(VideoCodec videoCodecType) {
+    std::vector<C2Config::level_t> supportedLevels;
     Type type = Type::kDecoder;
-    const auto& devices = getDevicesForType(type);
-    for (const auto& device : devices) {
-        if (!openDevicePath(device.first, type)) {
-            ALOGV("Failed opening %s", device.first.c_str());
+
+    for (const auto& info : getDeviceInfosForType(type)) {
+        scoped_refptr<V4L2Device> device = V4L2Device::create();
+        if (!device->openDevicePath(info.first, type)) {
+            ALOGV("Failed opening %s", info.first.c_str());
             continue;
         }
 
-        const auto& profiles = enumerateSupportedDecodeProfiles(numFormats, pixelFormats);
+        const auto& levels = device->enumerateSupportedDecodeLevels(videoCodecType);
+        supportedLevels.insert(supportedLevels.end(), levels.begin(), levels.end());
+        device->closeDevice();
+    }
+
+    return supportedLevels;
+}
+
+// static
+SupportedProfiles V4L2Device::getSupportedProfiles(V4L2Device::Type type,
+                                                   const std::vector<uint32_t>& pixelFormats) {
+    SupportedProfiles supportedProfiles;
+
+    for (const auto& info : getDeviceInfosForType(type)) {
+        scoped_refptr<V4L2Device> device = V4L2Device::create();
+        if (!device->openDevicePath(info.first, type)) {
+            ALOGV("Failed opening %s", info.first.c_str());
+            continue;
+        }
+
+        const auto& profiles = device->enumerateSupportedProfiles(type, pixelFormats);
         supportedProfiles.insert(supportedProfiles.end(), profiles.begin(), profiles.end());
-        closeDevice();
+
+        device->closeDevice();
     }
 
     return supportedProfiles;
 }
 
-V4L2Device::SupportedEncodeProfiles V4L2Device::getSupportedEncodeProfiles() {
-    SupportedEncodeProfiles supportedProfiles;
+// static
+C2Config::profile_t V4L2Device::getDefaultProfile(VideoCodec codec) {
+    uint32_t queryId = 0;
 
-    Type type = Type::kEncoder;
-    const auto& devices = getDevicesForType(type);
-    for (const auto& device : devices) {
-        if (!openDevicePath(device.first, type)) {
-            ALOGV("Failed opening %s", device.first.c_str());
+    switch (codec) {
+    case VideoCodec::H264:
+        queryId = V4L2_CID_MPEG_VIDEO_H264_PROFILE;
+        break;
+    case VideoCodec::VP8:
+        queryId = V4L2_CID_MPEG_VIDEO_VP8_PROFILE;
+        break;
+    case VideoCodec::VP9:
+        queryId = V4L2_CID_MPEG_VIDEO_VP9_PROFILE;
+        break;
+    case VideoCodec::HEVC:
+        queryId = V4L2_CID_MPEG_VIDEO_HEVC_PROFILE;
+        break;
+    default:
+        return C2Config::PROFILE_UNUSED;
+    }
+
+    for (const auto& info : getDeviceInfosForType(Type::kDecoder)) {
+        scoped_refptr<V4L2Device> device = V4L2Device::create();
+        if (!device->openDevicePath(info.first, Type::kDecoder)) {
+            ALOGV("Failed opening %s", info.first.c_str());
             continue;
         }
 
-        const auto& profiles = enumerateSupportedEncodeProfiles();
-        supportedProfiles.insert(supportedProfiles.end(), profiles.begin(), profiles.end());
-        closeDevice();
-    }
+        // Call to query control which will return structure including
+        // index of default profile
+        v4l2_queryctrl queryCtrl = {};
+        queryCtrl.id = queryId;
+        if (device->ioctl(VIDIOC_QUERYCTRL, &queryCtrl) != 0) {
+            device->closeDevice();
+            continue;
+        }
 
-    return supportedProfiles;
+        v4l2_querymenu queryMenu = {};
+        queryMenu.id = queryCtrl.id;
+        queryMenu.index = queryCtrl.default_value;
+        if (device->ioctl(VIDIOC_QUERYMENU, &queryMenu) == 0) {
+            device->closeDevice();
+            return v4L2ProfileToC2Profile(codec, queryMenu.index);
+        }
+
+        device->closeDevice();
+    }
+    return C2Config::PROFILE_UNUSED;
 }
 
-V4L2Device::SupportedDecodeProfiles V4L2Device::enumerateSupportedDecodeProfiles(
-        const size_t numFormats, const uint32_t pixelFormats[]) {
-    SupportedDecodeProfiles profiles;
+// static
+C2Config::level_t V4L2Device::getDefaultLevel(VideoCodec codec) {
+    uint32_t queryId = 0;
+
+    switch (codec) {
+    case VideoCodec::H264:
+        queryId = V4L2_CID_MPEG_VIDEO_H264_LEVEL;
+        break;
+#ifdef V4L2_CID_MPEG_VIDEO_VP9_LEVEL
+    case VideoCodec::VP9:
+        queryId = V4L2_CID_MPEG_VIDEO_VP9_LEVEL;
+        break;
+#endif
+    case VideoCodec::HEVC:
+        queryId = V4L2_CID_MPEG_VIDEO_HEVC_LEVEL;
+        break;
+    default:
+        return C2Config::LEVEL_UNUSED;
+    }
+
+    for (const auto& info : getDeviceInfosForType(Type::kDecoder)) {
+        scoped_refptr<V4L2Device> device = V4L2Device::create();
+        if (!device->openDevicePath(info.first, Type::kDecoder)) {
+            ALOGV("Failed opening %s", info.first.c_str());
+            continue;
+        }
+
+        v4l2_queryctrl queryCtrl = {};
+        queryCtrl.id = queryId;
+        if (device->ioctl(VIDIOC_QUERYCTRL, &queryCtrl) != 0) {  // gets index of default profile
+            device->closeDevice();
+            continue;
+        }
+
+        v4l2_querymenu queryMenu = {};
+        queryMenu.id = queryCtrl.id;
+        queryMenu.index = queryCtrl.default_value;
+        if (device->ioctl(VIDIOC_QUERYMENU, &queryMenu) == 0) {
+            device->closeDevice();
+            return v4L2LevelToC2Level(codec, queryMenu.index);
+        }
+
+        device->closeDevice();
+    }
+
+    return C2Config::LEVEL_UNUSED;
+}
+
+// static
+SupportedCapabilities V4L2Device::queryDecodingCapabilities(VideoCodec codec) {
+    SupportedCapabilities caps;
+    caps.codec = codec;
+    caps.supportedLevels = V4L2Device::getSupportedDecodeLevels(codec);
+    caps.defaultLevel = V4L2Device::getDefaultLevel(codec);
+    caps.supportedProfiles = V4L2Device::getSupportedProfiles(
+            V4L2Device::Type::kDecoder, {V4L2Device::videoCodecToPixFmt(codec)});
+    caps.defaultLevel = V4L2Device::getDefaultLevel(codec);
+
+    return caps;
+}
+
+// static
+SupportedCapabilities V4L2Device::queryEncodingCapabilities(VideoCodec codec) {
+    SupportedCapabilities caps;
+    caps.codec = codec;
+    caps.supportedProfiles = V4L2Device::getSupportedProfiles(
+            V4L2Device::Type::kEncoder, {V4L2Device::videoCodecToPixFmt(codec)});
+    return caps;
+}
+
+std::vector<C2Config::level_t> V4L2Device::enumerateSupportedDecodeLevels(
+        VideoCodec videoCodecType) {
+    std::vector<C2Config::level_t> supportedLevels;
 
     const auto& supportedPixelformats =
             enumerateSupportedPixelformats(V4L2_BUF_TYPE_VIDEO_OUTPUT_MPLANE);
 
     for (uint32_t pixelFormat : supportedPixelformats) {
-        if (std::find(pixelFormats, pixelFormats + numFormats, pixelFormat) ==
-            pixelFormats + numFormats)
+        if (isValidPixFmtForCodec(videoCodecType, pixelFormat)) {
+            std::vector<C2Config::level_t> levels = queryC2Levels(pixelFormat);
+            supportedLevels.insert(supportedLevels.end(), levels.begin(), levels.end());
+        }
+    }
+
+    return supportedLevels;
+}
+
+SupportedProfiles V4L2Device::enumerateSupportedProfiles(
+        V4L2Device::Type type, const std::vector<uint32_t>& pixelFormats) {
+    SupportedProfiles profiles;
+
+    v4l2_buf_type bufType;
+    switch (type) {
+    case Type::kDecoder:
+        bufType = V4L2_BUF_TYPE_VIDEO_OUTPUT_MPLANE;
+        break;
+    case Type::kEncoder:
+        bufType = V4L2_BUF_TYPE_VIDEO_CAPTURE_MPLANE;
+        break;
+    }
+
+    const auto& supportedPixelformats = enumerateSupportedPixelformats(bufType);
+
+    for (uint32_t pixelFormat : supportedPixelformats) {
+        if (std::find(pixelFormats.begin(), pixelFormats.end(), pixelFormat) == pixelFormats.end())
             continue;
 
-        SupportedDecodeProfile profile;
+        SupportedProfile profile;
+        if (type == Type::kEncoder) {
+            profile.max_framerate_numerator = 30;
+            profile.max_framerate_denominator = 1;
+        }
+
         getSupportedResolution(pixelFormat, &profile.min_resolution, &profile.max_resolution);
 
-        const auto videoCodecProfiles = v4L2PixFmtToC2Profiles(pixelFormat, false);
+        const auto videoCodecProfiles = queryC2Profiles(pixelFormat);
 
         for (const auto& videoCodecProfile : videoCodecProfiles) {
             profile.profile = videoCodecProfile;
             profiles.push_back(profile);
 
-            ALOGV("Found decoder profile %s, resolutions: %s %s", profileToString(profile.profile),
+            ALOGV("Found profile %s, resolutions: %s %s", profileToString(profile.profile),
                   toString(profile.min_resolution).c_str(),
                   toString(profile.max_resolution).c_str());
         }
@@ -1877,39 +2364,14 @@ V4L2Device::SupportedDecodeProfiles V4L2Device::enumerateSupportedDecodeProfiles
     return profiles;
 }
 
-V4L2Device::SupportedEncodeProfiles V4L2Device::enumerateSupportedEncodeProfiles() {
-    SupportedEncodeProfiles profiles;
-
-    const auto& supportedPixelformats =
-            enumerateSupportedPixelformats(V4L2_BUF_TYPE_VIDEO_CAPTURE_MPLANE);
-
-    for (const auto& pixelformat : supportedPixelformats) {
-        SupportedEncodeProfile profile;
-        profile.max_framerate_numerator = 30;
-        profile.max_framerate_denominator = 1;
-        ui::Size minResolution;
-        getSupportedResolution(pixelformat, &minResolution, &profile.max_resolution);
-
-        const auto videoCodecProfiles = v4L2PixFmtToC2Profiles(pixelformat, true);
-
-        for (const auto& videoCodecProfile : videoCodecProfiles) {
-            profile.profile = videoCodecProfile;
-            profiles.push_back(profile);
-
-            ALOGV("Found encoder profile %s, max resolution: %s", profileToString(profile.profile),
-                  toString(profile.max_resolution).c_str());
-        }
-    }
-
-    return profiles;
-}
-
-bool V4L2Device::startPolling(android::V4L2DevicePoller::EventCallback eventCallback,
+bool V4L2Device::startPolling(scoped_refptr<base::SequencedTaskRunner> taskRunner,
+                              android::V4L2DevicePoller::EventCallback eventCallback,
                               base::RepeatingClosure errorCallback) {
     DCHECK_CALLED_ON_VALID_SEQUENCE(mClientSequenceChecker);
 
     if (!mDevicePoller) {
-        mDevicePoller = std::make_unique<android::V4L2DevicePoller>(this, "V4L2DeviceThreadPoller");
+        mDevicePoller = std::make_unique<android::V4L2DevicePoller>(this, "V4L2DeviceThreadPoller",
+                                                                    std::move(taskRunner));
     }
 
     bool ret = mDevicePoller->startPolling(std::move(eventCallback), std::move(errorCallback));
@@ -1994,70 +2456,59 @@ void V4L2Device::closeDevice() {
     mDeviceFd.reset();
 }
 
-void V4L2Device::enumerateDevicesForType(Type type) {
+// static
+const V4L2Device::DeviceInfos& V4L2Device::getDeviceInfosForType(V4L2Device::Type type) {
     // video input/output devices are registered as /dev/videoX in V4L2.
-    static const std::string kVideoDevicePattern = "/dev/video";
+    static constexpr const char* kVideoDevicePattern = "/dev/video";
+    static const DeviceInfos sNoDevices = {};
+    static std::mutex sDeviceInfosCacheLock;
+    static std::map<Type, DeviceInfos> sDeviceInfosCache;
 
-    std::string devicePattern;
+    std::lock_guard lock(sDeviceInfosCacheLock);
+    if (sDeviceInfosCache.find(type) != sDeviceInfosCache.end()) {
+        return sDeviceInfosCache[type];
+    }
+
     v4l2_buf_type bufType;
     switch (type) {
     case Type::kDecoder:
-        devicePattern = kVideoDevicePattern;
         bufType = V4L2_BUF_TYPE_VIDEO_OUTPUT_MPLANE;
         break;
     case Type::kEncoder:
-        devicePattern = kVideoDevicePattern;
         bufType = V4L2_BUF_TYPE_VIDEO_CAPTURE_MPLANE;
         break;
     default:
         ALOGE("Only decoder and encoder types are supported!!");
-        return;
+        return sNoDevices;
     }
 
-    std::vector<std::string> candidatePaths;
+    DeviceInfos deviceInfos;
+    for (int i = 0; i < 10; ++i) {
+        std::string path = base::StringPrintf("%s%d", kVideoDevicePattern, i);
 
-    // TODO(posciak): Remove this legacy unnumbered device once all platforms are updated to use
-    // numbered devices.
-    candidatePaths.push_back(devicePattern);
-
-    // We are sandboxed, so we can't query directory contents to check which devices are actually
-    // available. Try to open the first 16; if not present, we will just fail to open immediately.
-    for (int i = 0; i < 16; ++i) {
-        candidatePaths.push_back(base::StringPrintf("%s%d", devicePattern.c_str(), i));
-    }
-
-    Devices devices;
-    for (const auto& path : candidatePaths) {
-        if (!openDevicePath(path, type)) {
+        scoped_refptr<V4L2Device> device = V4L2Device::create();
+        if (!device->openDevicePath(path, type)) {
             continue;
         }
 
-        const auto& supportedPixelformats = enumerateSupportedPixelformats(bufType);
+        const auto& supportedPixelformats = device->enumerateSupportedPixelformats(bufType);
         if (!supportedPixelformats.empty()) {
             ALOGV("Found device: %s", path.c_str());
-            devices.push_back(std::make_pair(path, supportedPixelformats));
+            deviceInfos.push_back(std::make_pair(path, supportedPixelformats));
         }
 
-        closeDevice();
+        device->closeDevice();
     }
 
-    ALOG_ASSERT(mDevicesByType.count(type) == 0u);
-    mDevicesByType[type] = devices;
-}
+    sDeviceInfosCache[type] = deviceInfos;
 
-const V4L2Device::Devices& V4L2Device::getDevicesForType(Type type) {
-    if (mDevicesByType.count(type) == 0) enumerateDevicesForType(type);
-
-    ALOG_ASSERT(mDevicesByType.count(type) != 0u);
-    return mDevicesByType[type];
+    return sDeviceInfosCache[type];
 }
 
 std::string V4L2Device::getDevicePathFor(Type type, uint32_t pixFmt) {
-    const Devices& devices = getDevicesForType(type);
-
-    for (const auto& device : devices) {
-        if (std::find(device.second.begin(), device.second.end(), pixFmt) != device.second.end())
-            return device.first;
+    for (const auto& info : getDeviceInfosForType(type)) {
+        if (std::find(info.second.begin(), info.second.end(), pixFmt) != info.second.end())
+            return info.first;
     }
 
     return std::string();

@@ -2,16 +2,21 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#ifndef ANDROID_V4L2_CODEC2_COMPONENTS_V4L2_COMPONENT_FACTORY_H
-#define ANDROID_V4L2_CODEC2_COMPONENTS_V4L2_COMPONENT_FACTORY_H
+#ifndef ANDROID_V4L2_CODEC2_V4L2_V4L2_COMPONENT_FACTORY_H
+#define ANDROID_V4L2_CODEC2_V4L2_V4L2_COMPONENT_FACTORY_H
 
 #include <memory>
 #include <string>
 
 #include <C2ComponentFactory.h>
 #include <util/C2InterfaceHelper.h>
+#include <v4l2_codec2/common/Common.h>
 
 namespace android {
+
+struct SupportedCapabilities;
+class DecodeInterface;
+class EncodeInterface;
 
 class V4L2ComponentFactory : public C2ComponentFactory {
 public:
@@ -29,11 +34,15 @@ public:
                                 InterfaceDeleter deleter) override;
 
 private:
+    c2_status_t createEncodeInterface(std::shared_ptr<EncodeInterface>* intfImpl);
+    c2_status_t createDecodeInterface(std::shared_ptr<DecodeInterface>* intfImpl);
+
     const std::string mComponentName;
     const bool mIsEncoder;
     std::shared_ptr<C2ReflectorHelper> mReflector;
+    std::unique_ptr<SupportedCapabilities> mCapabilites;
 };
 
 }  // namespace android
 
-#endif  // ANDROID_V4L2_CODEC2_COMPONENTS_V4L2_COMPONENT_FACTORY_H
+#endif  // ANDROID_V4L2_CODEC2_V4L2_V4L2_COMPONENT_FACTORY_H
