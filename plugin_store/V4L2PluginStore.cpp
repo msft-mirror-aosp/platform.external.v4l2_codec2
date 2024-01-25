@@ -21,14 +21,30 @@
 
 namespace android {
 
+static std::mutex sAllocatorLoaderMutex;
+
+// Using optional because in the case of library being no availiable, we do not want to retry its search.
+static std::optional<std::unique_ptr<VendorAllocatorLoader>> sAllocatorLoader = std::nullopt;
+
+const std::unique_ptr<VendorAllocatorLoader>& getAllocatorLoader() {
+    {
+        std::lock_guard<std::mutex> lock(sAllocatorLoaderMutex);
+
+        if (sAllocatorLoader == std::nullopt) {
+            sAllocatorLoader = VendorAllocatorLoader::Create();
+        }
+    }
+
+    return *sAllocatorLoader;
+}
+
 C2Allocator* createAllocator(C2Allocator::id_t allocatorId) {
     ALOGV("%s(allocatorId=%d)", __func__, allocatorId);
-    static std::unique_ptr<VendorAllocatorLoader> sAllocatorLoader =
-            VendorAllocatorLoader::Create();
 
-    if (sAllocatorLoader != nullptr) {
+    auto& allocatorLoader = getAllocatorLoader();
+    if (allocatorLoader != nullptr) {
         ALOGD("%s(): Create C2Allocator (id=%u) from VendorAllocatorLoader", __func__, allocatorId);
-        return sAllocatorLoader->createAllocator(allocatorId);
+        return allocatorLoader->createAllocator(allocatorId);
     }
 
     ALOGI("%s(): Fallback to create C2AllocatorGralloc(id=%u)", __func__, allocatorId);
@@ -58,6 +74,16 @@ std::shared_ptr<C2Allocator> fetchAllocator(C2Allocator::id_t allocatorId) {
 
 C2BlockPool* createBlockPool(C2Allocator::id_t allocatorId, C2BlockPool::local_id_t poolId) {
     ALOGV("%s(allocatorId=%d, poolId=%" PRIu64 ")", __func__, allocatorId, poolId);
+
+    auto& allocatorLoader = getAllocatorLoader();
+    if (allocatorLoader != nullptr) {
+        ALOGD("%s(): Create C2BlockPool (id=%u) from VendorAllocatorLoader", __func__, allocatorId);
+        C2BlockPool* pool = allocatorLoader->createBlockPool(allocatorId, poolId);
+        ;
+        if (pool != nullptr) {
+            return pool;
+        }
+    }
 
     std::shared_ptr<C2Allocator> allocator = fetchAllocator(allocatorId);
     if (allocator == nullptr) {

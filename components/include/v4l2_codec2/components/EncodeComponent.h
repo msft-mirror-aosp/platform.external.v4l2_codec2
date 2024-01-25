@@ -1,14 +1,15 @@
-// Copyright 2020 The Chromium Authors. All rights reserved.
+// Copyright 2023 The Chromium Authors. All rights reserved.
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#ifndef ANDROID_V4L2_CODEC2_COMPONENTS_V4L2_ENCODE_COMPONENT_H
-#define ANDROID_V4L2_CODEC2_COMPONENTS_V4L2_ENCODE_COMPONENT_H
+#ifndef ANDROID_V4L2_CODEC2_COMPONENTS_ENCODE_COMPONENT_H
+#define ANDROID_V4L2_CODEC2_COMPONENTS_ENCODE_COMPONENT_H
 
 #include <atomic>
 #include <memory>
 #include <optional>
 #include <unordered_map>
+#include <vector>
 
 #include <C2Component.h>
 #include <C2ComponentFactory.h>
@@ -22,23 +23,24 @@
 #include <base/synchronization/waitable_event.h>
 #include <base/threading/thread.h>
 #include <util/C2InterfaceHelper.h>
+#include <v4l2_codec2/common/Common.h>
+#include <v4l2_codec2/common/VideoPixelFormat.h>
 
 namespace android {
 
 struct BitstreamBuffer;
 class FormatConverter;
 class VideoEncoder;
-class V4L2EncodeInterface;
+class EncodeInterface;
 
-class V4L2EncodeComponent : public C2Component,
-                            public std::enable_shared_from_this<V4L2EncodeComponent> {
+std::optional<std::vector<VideoFramePlane>> getVideoFrameLayout(const C2ConstGraphicBlock& block,
+                                                                VideoPixelFormat* format);
+
+std::optional<uint32_t> getVideoFrameStride(VideoPixelFormat format, ui::Size size);
+
+class EncodeComponent : public C2Component, public std::enable_shared_from_this<EncodeComponent> {
 public:
-    // Create a new instance of the V4L2EncodeComponent.
-    static std::shared_ptr<C2Component> create(C2String name, c2_node_id_t id,
-                                               std::shared_ptr<C2ReflectorHelper> helper,
-                                               C2ComponentFactory::ComponentDeleter deleter);
-
-    virtual ~V4L2EncodeComponent() override;
+    virtual ~EncodeComponent() override;
 
     // Implementation of the C2Component interface.
     c2_status_t start() override;
@@ -54,7 +56,7 @@ public:
                                c2_blocking_t mayBlock) override;
     std::shared_ptr<C2ComponentInterface> intf() override;
 
-private:
+protected:
     // Possible component states.
     enum class ComponentState {
         UNLOADED,  // Initial state of component.
@@ -63,11 +65,13 @@ private:
         ERROR,     // An error occurred.
     };
 
-    V4L2EncodeComponent(C2String name, c2_node_id_t id,
-                        std::shared_ptr<V4L2EncodeInterface> interface);
+    EncodeComponent(C2String name, c2_node_id_t id, std::shared_ptr<EncodeInterface> interface);
 
-    V4L2EncodeComponent(const V4L2EncodeComponent&) = delete;
-    V4L2EncodeComponent& operator=(const V4L2EncodeComponent&) = delete;
+    EncodeComponent(const EncodeComponent&) = delete;
+    EncodeComponent& operator=(const EncodeComponent&) = delete;
+
+    // Initialize the V4L2 device for encoding with the requested configuration.
+    virtual bool initializeEncoder() = 0;
 
     // Initialize the encoder on the encoder thread.
     void startTask(bool* success, ::base::WaitableEvent* done);
@@ -87,8 +91,6 @@ private:
     // Set the component listener on the encoder thread.
     void setListenerTask(const std::shared_ptr<Listener>& listener, ::base::WaitableEvent* done);
 
-    // Initialize the V4L2 device for encoding with the requested configuration.
-    bool initializeEncoder();
     // Update the |mBitrate| and |mFramerate| currently configured on the V4L2 device, to match the
     // values requested by the codec 2.0 framework.
     bool updateEncodingParameters();
@@ -132,14 +134,12 @@ private:
     // The underlying V4L2 encoder.
     std::unique_ptr<VideoEncoder> mEncoder;
 
-    // The number of concurrent encoder instances currently created.
-    static std::atomic<int32_t> sConcurrentInstances;
     // The component's registered name.
     const C2String mName;
     // The component's id, provided by the C2 framework upon initialization.
     const c2_node_id_t mId = 0;
     // The component's interface implementation.
-    const std::shared_ptr<V4L2EncodeInterface> mInterface;
+    const std::shared_ptr<EncodeInterface> mInterface;
 
     // Mutex used by the component to synchronize start/stop/reset/release calls, as the codec 2.0
     // API can be accessed from any thread.
@@ -152,6 +152,11 @@ private:
     std::queue<std::unique_ptr<C2Work>> mInputConverterQueue;
     // An input format convertor will be used if the device doesn't support the video's format.
     std::unique_ptr<FormatConverter> mInputFormatConverter;
+
+    // Pixel format of frames sent to V4L2 encoder, determined when the first input frame is queued.
+    VideoPixelFormat mInputPixelFormat = VideoPixelFormat::UNKNOWN;
+    // Layout of frames sent to V4L2 encoder, determined when the first input frame is queued.
+    std::vector<VideoFramePlane> mInputLayout;
 
     // The bitrate currently configured on the v4l2 device.
     uint32_t mBitrate = 0;
@@ -175,15 +180,15 @@ private:
     std::atomic<ComponentState> mComponentState;
 
     // The encoder thread on which all interaction with the V4L2 device is performed.
-    ::base::Thread mEncoderThread{"V4L2EncodeComponentThread"};
+    ::base::Thread mEncoderThread{"EncodeComponentThread"};
     // The task runner on the encoder thread.
     scoped_refptr<::base::SequencedTaskRunner> mEncoderTaskRunner;
 
     // The WeakPtrFactory used to get weak pointers of this.
-    ::base::WeakPtr<V4L2EncodeComponent> mWeakThis;
-    ::base::WeakPtrFactory<V4L2EncodeComponent> mWeakThisFactory{this};
+    ::base::WeakPtr<EncodeComponent> mWeakThis;
+    ::base::WeakPtrFactory<EncodeComponent> mWeakThisFactory{this};
 };
 
 }  // namespace android
 
-#endif  // ANDROID_V4L2_CODEC2_COMPONENTS_V4L2_ENCODE_COMPONENT_H
+#endif  // ANDROID_V4L2_CODEC2_COMPONENTS_ENCODE_COMPONENT_H

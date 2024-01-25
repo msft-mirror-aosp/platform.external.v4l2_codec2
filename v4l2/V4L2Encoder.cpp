@@ -5,7 +5,7 @@
 //#define LOG_NDEBUG 0
 #define LOG_TAG "V4L2Encoder"
 
-#include <v4l2_codec2/components/V4L2Encoder.h>
+#include <v4l2_codec2/v4l2/V4L2Encoder.h>
 
 #include <stdint.h>
 #include <optional>
@@ -19,14 +19,12 @@
 
 #include <v4l2_codec2/common/EncodeHelpers.h>
 #include <v4l2_codec2/common/Fourcc.h>
-#include <v4l2_codec2/common/V4L2Device.h>
 #include <v4l2_codec2/components/BitstreamBuffer.h>
+#include <v4l2_codec2/v4l2/V4L2Device.h>
 
 namespace android {
 
 namespace {
-
-const VideoPixelFormat kInputPixelFormat = VideoPixelFormat::NV12;
 
 // The maximum size for output buffer, which is chosen empirically for a 1080p video.
 constexpr size_t kMaxBitstreamBufferSizeInBytes = 2 * 1024 * 1024;  // 2MB
@@ -181,6 +179,11 @@ bool V4L2Encoder::setFramerate(uint32_t framerate) {
     ALOGV("%s()", __func__);
     ALOG_ASSERT(mTaskRunner->RunsTasksInCurrentSequence());
 
+    if (framerate == 0) {
+        ALOGE("Requesting invalid framerate 0");
+        return false;
+    }
+
     struct v4l2_streamparm parms;
     memset(&parms, 0, sizeof(v4l2_streamparm));
     parms.type = V4L2_BUF_TYPE_VIDEO_OUTPUT_MPLANE;
@@ -218,7 +221,7 @@ bool V4L2Encoder::initialize(C2Config::profile_t outputProfile, std::optional<ui
 
     // Open the V4L2 device for encoding to the requested output format.
     // TODO(dstaessens): Avoid conversion to VideoCodecProfile and use C2Config::profile_t directly.
-    uint32_t outputPixelFormat = V4L2Device::C2ProfileToV4L2PixFmt(outputProfile, false);
+    uint32_t outputPixelFormat = V4L2Device::c2ProfileToV4L2PixFmt(outputProfile, false);
     if (!outputPixelFormat) {
         ALOGE("Invalid output profile %s", profileToString(outputProfile));
         return false;
@@ -570,7 +573,7 @@ bool V4L2Encoder::configureOutputFormat(C2Config::profile_t outputProfile) {
     ALOG_ASSERT(!mOutputQueue->isStreaming());
     ALOG_ASSERT(!isEmpty(mVisibleSize));
 
-    auto format = mOutputQueue->setFormat(V4L2Device::C2ProfileToV4L2PixFmt(outputProfile, false),
+    auto format = mOutputQueue->setFormat(V4L2Device::c2ProfileToV4L2PixFmt(outputProfile, false),
                                           mVisibleSize, GetMaxOutputBufferSize(mVisibleSize));
     if (!format) {
         ALOGE("Failed to set output format to %s", profileToString(outputProfile));
@@ -631,20 +634,24 @@ bool V4L2Encoder::configureH264(C2Config::profile_t outputProfile,
         ALOGV("Device doesn't support prepending SPS and PPS to IDR, injecting manually.");
     }
 
+    // Set the H.264 profile.
+    const int32_t profile = V4L2Device::c2ProfileToV4L2H264Profile(outputProfile);
+    if (profile < 0) {
+        ALOGE("Trying to set invalid H.264 profile");
+        return false;
+    }
+    if (!mDevice->setExtCtrls(V4L2_CTRL_CLASS_MPEG,
+                              {V4L2ExtCtrl(V4L2_CID_MPEG_VIDEO_H264_PROFILE, profile)})) {
+        ALOGE("Failed setting H.264 profile to %u", outputProfile);
+        return false;
+    }
+
     std::vector<V4L2ExtCtrl> h264Ctrls;
 
     // No B-frames, for lowest decoding latency.
     h264Ctrls.emplace_back(V4L2_CID_MPEG_VIDEO_B_FRAMES, 0);
     // Quantization parameter maximum value (for variable bitrate control).
     h264Ctrls.emplace_back(V4L2_CID_MPEG_VIDEO_H264_MAX_QP, 51);
-
-    // Set H.264 profile.
-    int32_t profile = V4L2Device::c2ProfileToV4L2H264Profile(outputProfile);
-    if (profile < 0) {
-        ALOGE("Trying to set invalid H.264 profile");
-        return false;
-    }
-    h264Ctrls.emplace_back(V4L2_CID_MPEG_VIDEO_H264_PROFILE, profile);
 
     // Set H.264 output level. Use Level 4.0 as fallback default.
     int32_t h264Level =
@@ -666,7 +673,7 @@ bool V4L2Encoder::configureBitrateMode(C2Config::bitrate_mode_t bitrateMode) {
     ALOG_ASSERT(mTaskRunner->RunsTasksInCurrentSequence());
 
     v4l2_mpeg_video_bitrate_mode v4l2BitrateMode =
-            V4L2Device::C2BitrateModeToV4L2BitrateMode(bitrateMode);
+            V4L2Device::c2BitrateModeToV4L2BitrateMode(bitrateMode);
     if (!mDevice->setExtCtrls(V4L2_CTRL_CLASS_MPEG,
                               {V4L2ExtCtrl(V4L2_CID_MPEG_VIDEO_BITRATE_MODE, v4l2BitrateMode)})) {
         // TODO(b/190336806): Our stack doesn't support bitrate mode changes yet. We default to CBR
@@ -680,7 +687,8 @@ bool V4L2Encoder::startDevicePoll() {
     ALOGV("%s()", __func__);
     ALOG_ASSERT(mTaskRunner->RunsTasksInCurrentSequence());
 
-    if (!mDevice->startPolling(::base::BindRepeating(&V4L2Encoder::serviceDeviceTask, mWeakThis),
+    if (!mDevice->startPolling(mTaskRunner,
+                               ::base::BindRepeating(&V4L2Encoder::serviceDeviceTask, mWeakThis),
                                ::base::BindRepeating(&V4L2Encoder::onPollError, mWeakThis))) {
         ALOGE("Device poll thread failed to start");
         onError();
@@ -741,7 +749,7 @@ bool V4L2Encoder::enqueueInputBuffer(std::unique_ptr<InputFrame> frame) {
     ALOG_ASSERT(mInputLayout->mPlanes.size() == frame->planes().size());
 
     auto format = frame->pixelFormat();
-    auto planes = frame->planes();
+    auto& planes = frame->planes();
     auto index = frame->index();
     auto timestamp = frame->timestamp();
 
@@ -759,28 +767,43 @@ bool V4L2Encoder::enqueueInputBuffer(std::unique_ptr<InputFrame> frame) {
              .tv_usec = static_cast<time_t>(timestamp % ::base::Time::kMicrosecondsPerSecond)});
     size_t bufferId = buffer->bufferId();
 
-    for (size_t i = 0; i < planes.size(); ++i) {
-        // Single-buffer input format may have multiple color planes, so bytesUsed of the single
-        // buffer should be sum of each color planes' size.
-        size_t bytesUsed = 0;
-        if (planes.size() == 1) {
-            bytesUsed = allocationSize(format, mInputLayout->mCodedSize);
-        } else {
-            bytesUsed = ::base::checked_cast<size_t>(
+    std::vector<int> fds = frame->fds();
+    if (mInputLayout->mMultiPlanar) {
+        // If the input format is multi-planar, then we need to submit one memory plane per color
+        // plane of our input frames.
+        for (size_t i = 0; i < planes.size(); ++i) {
+            size_t bytesUsed = ::base::checked_cast<size_t>(
                     getArea(planeSize(format, i, mInputLayout->mCodedSize)).value());
+
+            // TODO(crbug.com/901264): The way to pass an offset within a DMA-buf is not defined
+            // in V4L2 specification, so we abuse data_offset for now. Fix it when we have the
+            // right interface, including any necessary validation and potential alignment.
+            buffer->setPlaneDataOffset(i, planes[i].mOffset);
+            bytesUsed += planes[i].mOffset;
+            // Workaround: filling length should not be needed. This is a bug of videobuf2 library.
+            buffer->setPlaneSize(i, mInputLayout->mPlanes[i].mSize + planes[i].mOffset);
+            buffer->setPlaneBytesUsed(i, bytesUsed);
         }
+    } else {
+        ALOG_ASSERT(!planes.empty());
+        // If the input format is single-planar, then we only submit one buffer which contains
+        // all the color planes.
+        size_t bytesUsed = allocationSize(format, mInputLayout->mCodedSize);
 
         // TODO(crbug.com/901264): The way to pass an offset within a DMA-buf is not defined
         // in V4L2 specification, so we abuse data_offset for now. Fix it when we have the
         // right interface, including any necessary validation and potential alignment.
-        buffer->setPlaneDataOffset(i, planes[i].mOffset);
-        bytesUsed += planes[i].mOffset;
+        buffer->setPlaneDataOffset(0, planes[0].mOffset);
+        bytesUsed += planes[0].mOffset;
         // Workaround: filling length should not be needed. This is a bug of videobuf2 library.
-        buffer->setPlaneSize(i, mInputLayout->mPlanes[i].mSize + planes[i].mOffset);
-        buffer->setPlaneBytesUsed(i, bytesUsed);
+        buffer->setPlaneSize(0, bytesUsed);
+        buffer->setPlaneBytesUsed(0, bytesUsed);
+        // We only have one memory plane so we shall submit only one FD. The others are duplicates
+        // of the first one anyway.
+        fds.resize(1);
     }
 
-    if (!std::move(*buffer).queueDMABuf(frame->fds())) {
+    if (!std::move(*buffer).queueDMABuf(fds)) {
         ALOGE("Failed to queue input buffer using QueueDMABuf");
         onError();
         return false;

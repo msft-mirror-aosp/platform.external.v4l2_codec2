@@ -360,6 +360,15 @@ void C2VideoDecoderE2ETest::TestFPSBody() {
     printf("[LOG] Measured decoder FPS: %.4f\n", fps);
     EXPECT_GE(fps, static_cast<double>(g_env->min_fps_no_render()));
     printf("[LOG] Dropped frames rate: %lf\n", decoder_->dropped_frame_rate());
+
+    auto delivery_time = fps_calculator.CalucalateDeliveryTimeStats();
+    printf("[LOG] Measured delivery time average: %.4f\n", delivery_time.avg_us_ / 1E3);
+    printf("[LOG] Measured delivery time 25 percentile: %.4f\n",
+           delivery_time.percentile_25_us_ / 1E3);
+    printf("[LOG] Measured delivery time 50 percentile: %.4f\n",
+           delivery_time.percentile_50_us_ / 1E3);
+    printf("[LOG] Measured delivery time 75 percentile: %.4f\n",
+           delivery_time.percentile_75_us_ / 1E3);
 }
 
 TEST_F(C2VideoDecoderSurfaceE2ETest, TestFPS) {
