@@ -25,6 +25,7 @@ std::optional<Fourcc> Fourcc::fromUint32(uint32_t fourcc) {
     case XR24:
     case XB24:
     case RGB4:
+    case BGR4:
     case YU12:
     case YV12:
     case YM12:
@@ -58,6 +59,8 @@ std::optional<Fourcc> Fourcc::fromVideoPixelFormat(VideoPixelFormat pixelFormat,
             return Fourcc(XB24);
         case VideoPixelFormat::BGRA:
             return Fourcc(RGB4);
+        case VideoPixelFormat::RGBA:
+            return Fourcc(BGR4);
         case VideoPixelFormat::I420:
             return Fourcc(YU12);
         case VideoPixelFormat::YV12:
@@ -124,6 +127,7 @@ std::optional<Fourcc> Fourcc::fromVideoPixelFormat(VideoPixelFormat pixelFormat,
         case VideoPixelFormat::XR30:
         case VideoPixelFormat::XB30:
         case VideoPixelFormat::BGRA:
+        case VideoPixelFormat::RGBA:
         case VideoPixelFormat::UNKNOWN:
             break;
         }
@@ -145,6 +149,8 @@ VideoPixelFormat Fourcc::toVideoPixelFormat() const {
         return VideoPixelFormat::XBGR;
     case RGB4:
         return VideoPixelFormat::BGRA;
+    case BGR4:
+        return VideoPixelFormat::RGBA;
     case YU12:
     case YM12:
         return VideoPixelFormat::I420;
@@ -200,6 +206,7 @@ std::optional<Fourcc> Fourcc::toSinglePlanar() const {
     case XR24:
     case XB24:
     case RGB4:
+    case BGR4:
     case YU12:
     case YV12:
     case YUYV:
@@ -232,6 +239,7 @@ bool Fourcc::isMultiPlanar() const {
     case XR24:
     case XB24:
     case RGB4:
+    case BGR4:
     case YU12:
     case YV12:
     case YUYV:
@@ -264,6 +272,7 @@ static_assert(Fourcc::XR24 == V4L2_PIX_FMT_XBGR32, "Mismatch Fourcc");
 static_assert(Fourcc::XB24 == V4L2_PIX_FMT_RGBX32, "Mismatch Fourcc");
 #endif  // V4L2_PIX_FMT_RGBX32
 static_assert(Fourcc::RGB4 == V4L2_PIX_FMT_RGB32, "Mismatch Fourcc");
+static_assert(Fourcc::BGR4 == V4L2_PIX_FMT_BGR32, "Mismatch Fourcc");
 static_assert(Fourcc::YU12 == V4L2_PIX_FMT_YUV420, "Mismatch Fourcc");
 static_assert(Fourcc::YV12 == V4L2_PIX_FMT_YVU420, "Mismatch Fourcc");
 static_assert(Fourcc::YM12 == V4L2_PIX_FMT_YUV420M, "Mismatch Fourcc");

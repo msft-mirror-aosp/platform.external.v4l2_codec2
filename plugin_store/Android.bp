@@ -9,17 +9,14 @@ package {
 
 cc_library_shared {
     name: "libc2plugin_store",
-    vendor: true,
+    vendor_available: true,
 
     defaults: [
         "libcodec2-impl-defaults",
     ],
 
     srcs: [
-        "C2VdaBqBlockPool.cpp",
-        "C2VdaPooledBlockPool.cpp",
         "DmabufHelpers.cpp",
-        "H2BGraphicBufferProducer.cpp",
         "V4L2PluginStore.cpp",
         "VendorAllocatorLoader.cpp",
     ],

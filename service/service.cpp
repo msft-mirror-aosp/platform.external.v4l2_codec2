@@ -3,24 +3,34 @@
 // found in the LICENSE file.
 
 //#define LOG_NDEBUG 0
+#ifdef V4L2_CODEC2_SERVICE_V4L2_STORE
 #define LOG_TAG "android.hardware.media.c2@1.0-service-v4l2"
+#else
+#error "V4L2_CODEC2_SERVICE_V4L2_STORE has to be defined"
+#endif
 
-#include <base/logging.h>
 #include <C2Component.h>
-#include <codec2/hidl/1.0/ComponentStore.h>
+#include <base/logging.h>
+#include <codec2/hidl/1.2/ComponentStore.h>
 #include <hidl/HidlTransportSupport.h>
 #include <log/log.h>
 #include <minijail.h>
 
-#include <v4l2_codec2/components/V4L2ComponentStore.h>
+#ifdef V4L2_CODEC2_SERVICE_V4L2_STORE
+#include <v4l2_codec2/v4l2/V4L2ComponentStore.h>
+#endif
 
-// Default policy for codec2.0 service.
+// This is the absolute on-device path of the prebuild_etc module
+// "android.hardware.media.c2-default-seccomp_policy" in Android.bp.
 static constexpr char kBaseSeccompPolicyPath[] =
-        "/vendor/etc/seccomp_policy/android.hardware.media.c2@1.2-default-seccomp_policy";
+        "/vendor/etc/seccomp_policy/"
+        "android.hardware.media.c2-default-seccomp_policy";
 
-// Additional device-specific seccomp permissions can be added in this file.
+// Additional seccomp permissions can be added in this file.
+// This file does not exist by default.
 static constexpr char kExtSeccompPolicyPath[] =
-        "/vendor/etc/seccomp_policy/codec2.vendor.ext.policy";
+        "/vendor/etc/seccomp_policy/"
+        "android.hardware.media.c2-extended-seccomp_policy";
 
 int main(int /* argc */, char** /* argv */) {
     ALOGD("Service starting...");
@@ -30,7 +40,7 @@ int main(int /* argc */, char** /* argv */) {
 
     // Extra threads may be needed to handle a stacked IPC sequence that
     // contains alternating binder and hwbinder calls. (See b/35283480.)
-    android::hardware::configureRpcThreadpool(8, true /* callerWillJoin */);
+    android::hardware::configureRpcThreadpool(16, true /* callerWillJoin */);
 
 #if LOG_NDEBUG == 0
     ALOGD("Enable all verbose logging of libchrome");
@@ -39,13 +49,16 @@ int main(int /* argc */, char** /* argv */) {
 
     // Create IComponentStore service.
     {
-        using namespace ::android::hardware::media::c2::V1_0;
+        using namespace ::android::hardware::media::c2::V1_2;
+        android::sp<IComponentStore> store = nullptr;
 
+#ifdef V4L2_CODEC2_SERVICE_V4L2_STORE
         ALOGD("Instantiating Codec2's V4L2 IComponentStore service...");
-        android::sp<IComponentStore> store(
-                new utils::ComponentStore(android::V4L2ComponentStore::Create()));
+        store = new utils::ComponentStore(android::V4L2ComponentStore::Create());
+#endif
+
         if (store == nullptr) {
-            ALOGE("Cannot create Codec2's V4L2 IComponentStore service.");
+            ALOGE("Cannot create Codec2's IComponentStore service.");
         } else if (store->registerAsService("default") != android::OK) {
             ALOGE("Cannot register Codec2's IComponentStore service.");
         } else {
