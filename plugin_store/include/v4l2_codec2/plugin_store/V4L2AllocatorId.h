@@ -12,9 +12,7 @@ namespace V4L2AllocatorId {
 
 // The allocator ids used for V4L2DecodeComponent.
 enum : C2AllocatorStore::id_t {
-    V4L2_BUFFERQUEUE = C2PlatformAllocatorStore::PLATFORM_END,
-    V4L2_BUFFERPOOL,
-    SECURE_LINEAR,
+    SECURE_LINEAR = C2PlatformAllocatorStore::PLATFORM_END,
     SECURE_GRAPHIC,
 };
 

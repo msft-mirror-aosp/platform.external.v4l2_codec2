@@ -5,9 +5,9 @@
 //#define LOG_NDEBUG 0
 #define LOG_TAG "android.hardware.media.c2@1.0-service-v4l2"
 
-#include <base/logging.h>
 #include <C2Component.h>
-#include <codec2/hidl/1.0/ComponentStore.h>
+#include <base/logging.h>
+#include <codec2/hidl/1.2/ComponentStore.h>
 #include <hidl/HidlTransportSupport.h>
 #include <log/log.h>
 #include <minijail.h>
@@ -43,7 +43,7 @@ int main(int /* argc */, char** /* argv */) {
 
     // Create IComponentStore service.
     {
-        using namespace ::android::hardware::media::c2::V1_0;
+        using namespace ::android::hardware::media::c2::V1_2;
 
         ALOGD("Instantiating Codec2's V4L2 IComponentStore service...");
         android::sp<IComponentStore> store(
