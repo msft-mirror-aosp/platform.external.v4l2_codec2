@@ -171,6 +171,17 @@ bool OutputFile::WriteFrame(uint32_t data_size, const uint8_t* data) {
     }
 }
 
+// Reference: (https://source.chromium.org/chromium/chromium/src/+/main:
+//             media/gpu/video_decode_accelerator_perf_tests.cc
+PerformanceTimeStats::PerformanceTimeStats(const std::vector<double>& times) {
+    avg_us_ = std::accumulate(times.begin(), times.end(), 0.0) / times.size();
+    std::vector<double> sorted_times = times;
+    std::sort(sorted_times.begin(), sorted_times.end());
+    percentile_25_us_ = sorted_times[sorted_times.size() / 4];
+    percentile_50_us_ = sorted_times[sorted_times.size() / 2];
+    percentile_75_us_ = sorted_times[(sorted_times.size() * 3) / 4];
+}
+
 bool FPSCalculator::RecordFrameTimeDiff() {
     int64_t now_us = GetNowUs();
     if (last_frame_time_us_ != 0) {
@@ -196,6 +207,10 @@ double FPSCalculator::CalculateFPS() const {
           kMovingAvgWindowUs);
 
     return 1E6 / moving_avgs[index];
+}
+
+PerformanceTimeStats FPSCalculator::CalucalateDeliveryTimeStats() const {
+    return PerformanceTimeStats(frame_time_diffs_us_);
 }
 
 // Reference: (https://cs.corp.google.com/android/cts/common/device-side/util/

@@ -28,7 +28,7 @@ public:
     ~ImplDefinedToRGBXMap();
     ImplDefinedToRGBXMap() = delete;
 
-    static std::unique_ptr<ImplDefinedToRGBXMap> Create(const C2ConstGraphicBlock& block);
+    static std::unique_ptr<ImplDefinedToRGBXMap> create(const C2ConstGraphicBlock& block);
 
     const uint8_t* addr() const { return mAddr; }
     int offset() const { return 0; }
@@ -51,23 +51,20 @@ public:
 
     // Create FormatConverter instance and initialize it, nullptr will be returned on
     // initialization error.
-    static std::unique_ptr<FormatConverter> Create(VideoPixelFormat outFormat,
+    static std::unique_ptr<FormatConverter> create(VideoPixelFormat outFormat,
                                                    const ui::Size& visibleSize, uint32_t inputCount,
                                                    const ui::Size& codedSize);
 
-    // Convert the input block into the alternative block with required pixel format and return it,
-    // or return the original block if zero-copy is applied.
-    C2ConstGraphicBlock convertBlock(uint64_t frameIndex, const C2ConstGraphicBlock& inputBlock,
-                                     c2_status_t* status /* non-null */);
+    // Convert the |inputBlock| to the configured pixel format and return it as |convertedBlock|.
+    // Returns the original block if no conversion is required.
+    c2_status_t convertBlock(uint64_t frameIndex, const C2ConstGraphicBlock& inputBlock,
+                             C2ConstGraphicBlock* convertedBlock);
     // Return the block ownership when VEA no longer needs it, or erase the zero-copy BlockEntry.
     c2_status_t returnBlock(uint64_t frameIndex);
     // Check if there is available block for conversion.
     bool isReady() const { return !mAvailableQueue.empty(); }
 
 private:
-    // The minimal number requirement of allocated buffers for conversion. This value is the same as
-    // kMinInputBufferArraySize from CCodecBufferChannel.
-    static constexpr uint32_t kMinInputBufferCount = 8;
     // The constant used by BlockEntry to indicate no frame is associated with the BlockEntry.
     static constexpr uint64_t kNoFrameAssociated = ~static_cast<uint64_t>(0);
 
@@ -91,10 +88,13 @@ private:
 
     FormatConverter() = default;
 
-    // Initialize foramt converter. It will pre-allocate a set of graphic blocks as |codedSize| and
-    // |outFormat|. This function should be called prior to other functions.
+    // Initialize format converter. This pre-allocates a set of graphic blocks with |codedSize| and
+    // |outFormat| for format conversion. This function should be called prior to other functions.
     c2_status_t initialize(VideoPixelFormat outFormat, const ui::Size& visibleSize,
                            uint32_t inputCount, const ui::Size& codedSize);
+
+    // Allocate a set of graphic blocks with |mCodedSize| and |mOutFormat| for format conversion.
+    c2_status_t allocateBuffers(uint32_t count);
 
     // The array of block entries.
     std::vector<std::unique_ptr<BlockEntry>> mGraphicBlocks;
@@ -106,8 +106,12 @@ private:
     std::unique_ptr<uint8_t[]> mTempPlaneU;
     std::unique_ptr<uint8_t[]> mTempPlaneV;
 
+    // The output pixel format.
     VideoPixelFormat mOutFormat = VideoPixelFormat::UNKNOWN;
+    // The video frame visible size.
     ui::Size mVisibleSize;
+    // The video frame coded size.
+    ui::Size mCodedSize;
 };
 
 }  // namespace android

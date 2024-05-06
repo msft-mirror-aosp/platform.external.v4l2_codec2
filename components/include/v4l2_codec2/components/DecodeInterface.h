@@ -1,9 +1,9 @@
-// Copyright 2020 The Chromium Authors. All rights reserved.
+// Copyright 2023 The Chromium Authors. All rights reserved.
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#ifndef ANDROID_V4L2_CODEC2_COMPONENTS_V4L2_DECODE_INTERFACE_H
-#define ANDROID_V4L2_CODEC2_COMPONENTS_V4L2_DECODE_INTERFACE_H
+#ifndef ANDROID_V4L2_CODEC2_COMPONENTS_DECODE_INTERFACE_H
+#define ANDROID_V4L2_CODEC2_COMPONENTS_DECODE_INTERFACE_H
 
 #include <memory>
 #include <string>
@@ -12,16 +12,18 @@
 #include <ui/Size.h>
 #include <util/C2InterfaceHelper.h>
 
+#include <v4l2_codec2/common/Common.h>
 #include <v4l2_codec2/common/VideoTypes.h>
 
 namespace android {
 
-class V4L2DecodeInterface : public C2InterfaceHelper {
+class DecodeInterface : public C2InterfaceHelper {
 public:
-    V4L2DecodeInterface(const std::string& name, const std::shared_ptr<C2ReflectorHelper>& helper);
-    V4L2DecodeInterface(const V4L2DecodeInterface&) = delete;
-    V4L2DecodeInterface& operator=(const V4L2DecodeInterface&) = delete;
-    ~V4L2DecodeInterface() = default;
+    DecodeInterface(const std::string& name, const std::shared_ptr<C2ReflectorHelper>& helper,
+                    const SupportedCapabilities& caps);
+    DecodeInterface(const DecodeInterface&) = delete;
+    DecodeInterface& operator=(const DecodeInterface&) = delete;
+    ~DecodeInterface() = default;
 
     // interfaces for the client component.
     c2_status_t status() const { return mInitStatus; }
@@ -38,6 +40,7 @@ private:
     // Configurable parameter setters.
     static C2R ProfileLevelSetter(bool mayBlock, C2P<C2StreamProfileLevelInfo::input>& info);
     static C2R SizeSetter(bool mayBlock, C2P<C2StreamPictureSizeInfo::output>& videoSize);
+    static C2R InputSizeSetter(bool mayBlock, C2P<C2StreamMaxBufferSizeInfo::input>& inputSize);
     static C2R MaxInputBufferSizeCalculator(bool mayBlock,
                                             C2P<C2StreamMaxBufferSizeInfo::input>& me,
                                             const C2P<C2StreamPictureSizeInfo::output>& size);
@@ -66,6 +69,9 @@ private:
     // buffer can be released by the component; only used for H264 because H264 may reorder the
     // output frames.
     std::shared_ptr<C2PortDelayTuning::output> mOutputDelay;
+    // The number of extra frames processed at one time by the component. Allows more input
+    // buffers to be simultaneously enqueued.
+    std::shared_ptr<C2PipelineDelayTuning> mPipelineDelay;
     // The input codec profile and level. For now configuring this parameter is useless since
     // the component always uses fixed codec profile to initialize accelerator. It is only used
     // for the client to query supported profile and level values.
@@ -100,4 +106,4 @@ private:
 
 }  // namespace android
 
-#endif  // ANDROID_V4L2_CODEC2_COMPONENTS_V4L2_DECODE_INTERFACE_H
+#endif  // ANDROID_V4L2_CODEC2_COMPONENTS_DECODE_INTERFACE_H

@@ -179,7 +179,7 @@ void VideoFramePool::getVideoFrameTask() {
     ALOG_ASSERT(mFetchTaskRunner->RunsTasksInCurrentSequence());
 
     // Variables used to exponential backoff retry when buffer fetching times out.
-    constexpr size_t kFetchRetryDelayInit = 64;    // Initial delay: 64us
+    constexpr size_t kFetchRetryDelayInit = 256;   // Initial delay: 256us
     constexpr size_t kFetchRetryDelayMax = 16384;  // Max delay: 16ms (1 frame at 60fps)
     constexpr size_t kFenceWaitTimeoutNs = 16000000;  // 16ms (1 frame at 60fps)
     static size_t sNumRetries = 0;
@@ -190,7 +190,18 @@ void VideoFramePool::getVideoFrameTask() {
     c2_status_t err = mBlockPool->fetchGraphicBlock(mSize.width, mSize.height,
                                                     static_cast<uint32_t>(mPixelFormat),
                                                     mMemoryUsage, &block, &fence);
-    if (err == C2_BLOCKING) {
+    // C2_BLOCKING can be returned either based on the state of the block pool itself
+    // or the state of the underlying buffer queue. If the cause is the underlying
+    // buffer queue, then the block pool returns a null fence. Since a null fence is
+    // immediately ready, we need to delay instead of trying to wait on the fence, to
+    // avoid spinning.
+    //
+    // Unfortunately, a null fence is considered a valid fence, so the best we can do
+    // to detect a null fence is to assume that any fence that is immediately ready
+    // is the null fence. A false positive by racing with a real fence can result in
+    // an unnecessary delay, but the only alternative is to ignore fences altogether
+    // and always delay.
+    if (err == C2_BLOCKING && !fence.ready()) {
         err = fence.wait(kFenceWaitTimeoutNs);
         if (err == C2_OK) {
             ALOGV("%s(): fence wait succeded, retrying now", __func__);
@@ -231,7 +242,7 @@ void VideoFramePool::getVideoFrameTask() {
                 FROM_HERE, ::base::BindOnce(&VideoFramePool::getVideoFrameTask, mFetchWeakThis),
                 ::base::TimeDelta::FromMicroseconds(sDelay));
 
-        sDelay = std::min(sDelay * 2, kFetchRetryDelayMax);  // Exponential backoff
+        sDelay = std::min(sDelay * 4, kFetchRetryDelayMax);  // Exponential backoff
         sNumRetries++;
         return;
     }

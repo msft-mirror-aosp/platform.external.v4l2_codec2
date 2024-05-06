@@ -1,11 +1,12 @@
-// Copyright 2020 The Chromium Authors. All rights reserved.
+// Copyright 2023 The Chromium Authors. All rights reserved.
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 //#define LOG_NDEBUG 0
-#define LOG_TAG "V4L2DecodeComponent"
+#define ATRACE_TAG ATRACE_TAG_VIDEO
+#define LOG_TAG "DecodeComponent"
 
-#include <v4l2_codec2/components/V4L2DecodeComponent.h>
+#include <v4l2_codec2/components/DecodeComponent.h>
 
 #include <inttypes.h>
 #include <linux/videodev2.h>
@@ -19,60 +20,48 @@
 #include <SimpleC2Interface.h>
 #include <base/bind.h>
 #include <base/callback_helpers.h>
+#include <base/strings/stringprintf.h>
 #include <base/time/time.h>
 #include <cutils/properties.h>
 #include <log/log.h>
 #include <media/stagefright/foundation/ColorUtils.h>
+#include <utils/Trace.h>
 
 #include <v4l2_codec2/common/Common.h>
-#include <v4l2_codec2/common/NalParser.h>
+#include <v4l2_codec2/common/H264NalParser.h>
+#include <v4l2_codec2/common/HEVCNalParser.h>
 #include <v4l2_codec2/common/VideoTypes.h>
 #include <v4l2_codec2/components/BitstreamBuffer.h>
-#include <v4l2_codec2/components/V4L2Decoder.h>
 #include <v4l2_codec2/components/VideoFramePool.h>
 
 namespace android {
 namespace {
-
-// CCBC pauses sending input buffers to the component when all the output slots are filled by
-// pending decoded buffers. If the available output buffers are exhausted before CCBC pauses sending
-// input buffers, CCodec may timeout due to waiting for a available output buffer.
-// This function returns the minimum number of output buffers to prevent the buffers from being
-// exhausted before CCBC pauses sending input buffers.
-size_t getMinNumOutputBuffers(VideoCodec codec) {
-    // The constant values copied from CCodecBufferChannel.cpp.
-    // (b/184020290): Check the value still sync when seeing error message from CCodec:
-    // "previous call to queue exceeded timeout".
-    constexpr size_t kSmoothnessFactor = 4;
-    constexpr size_t kRenderingDepth = 3;
-    // Extra number of needed output buffers for V4L2Decoder.
-    constexpr size_t kExtraNumOutputBuffersForDecoder = 2;
-
-    // The total needed number of output buffers at pipeline are:
-    // - MediaCodec output slots: output delay + kSmoothnessFactor
-    // - Surface: kRenderingDepth
-    // - Component: kExtraNumOutputBuffersForDecoder
-    return V4L2DecodeInterface::getOutputDelay(codec) + kSmoothnessFactor + kRenderingDepth +
-           kExtraNumOutputBuffersForDecoder;
-}
 
 // Mask against 30 bits to avoid (undefined) wraparound on signed integer.
 int32_t frameIndexToBitstreamId(c2_cntr64_t frameIndex) {
     return static_cast<int32_t>(frameIndex.peeku() & 0x3FFFFFFF);
 }
 
-bool parseCodedColorAspects(const C2ConstLinearBlock& input,
+bool parseCodedColorAspects(const C2ConstLinearBlock& input, std::optional<VideoCodec> codec,
                             C2StreamColorAspectsInfo::input* codedAspects) {
     C2ReadView view = input.map().get();
-    NalParser parser(view.data(), view.capacity());
+    NalParser::ColorAspects aspects;
+    std::unique_ptr<NalParser> parser;
+    if (codec == VideoCodec::H264) {
+        parser = std::make_unique<H264NalParser>(view.data(), view.capacity());
+    } else if (codec == VideoCodec::HEVC) {
+        parser = std::make_unique<HEVCNalParser>(view.data(), view.capacity());
+    } else {
+        ALOGV("Unsupported codec for finding color aspects");
+        return false;
+    }
 
-    if (!parser.locateSPS()) {
+    if (!parser->locateSPS()) {
         ALOGV("Couldn't find SPS");
         return false;
     }
 
-    NalParser::ColorAspects aspects;
-    if (!parser.findCodedColorAspects(&aspects)) {
+    if (!parser->findCodedColorAspects(&aspects)) {
         ALOGV("Couldn't find color description in SPS");
         return false;
     }
@@ -137,55 +126,26 @@ bool isNoShowFrameWork(const C2Work& work, const C2WorkOrdinalStruct& currOrdina
 
 }  // namespace
 
-// static
-std::atomic<int32_t> V4L2DecodeComponent::sConcurrentInstances = 0;
-
-// static
-std::shared_ptr<C2Component> V4L2DecodeComponent::create(
-        const std::string& name, c2_node_id_t id, const std::shared_ptr<C2ReflectorHelper>& helper,
-        C2ComponentFactory::ComponentDeleter deleter) {
-    static const int32_t kMaxConcurrentInstances =
-            property_get_int32("ro.vendor.v4l2_codec2.decode_concurrent_instances", -1);
-    static std::mutex mutex;
-
-    std::lock_guard<std::mutex> lock(mutex);
-
-    if (kMaxConcurrentInstances >= 0 && sConcurrentInstances.load() >= kMaxConcurrentInstances) {
-        ALOGW("Reject to Initialize() due to too many instances: %d", sConcurrentInstances.load());
-        return nullptr;
-    }
-
-    auto intfImpl = std::make_shared<V4L2DecodeInterface>(name, helper);
-    if (intfImpl->status() != C2_OK) {
-        ALOGE("Failed to initialize V4L2DecodeInterface.");
-        return nullptr;
-    }
-
-    return std::shared_ptr<C2Component>(new V4L2DecodeComponent(name, id, helper, intfImpl),
-                                        deleter);
-}
-
-V4L2DecodeComponent::V4L2DecodeComponent(const std::string& name, c2_node_id_t id,
-                                         const std::shared_ptr<C2ReflectorHelper>& helper,
-                                         const std::shared_ptr<V4L2DecodeInterface>& intfImpl)
-      : mIntfImpl(intfImpl),
-        mIntf(std::make_shared<SimpleInterface<V4L2DecodeInterface>>(name.c_str(), id, mIntfImpl)) {
+DecodeComponent::DecodeComponent(uint32_t debugStreamId, const std::string& name, c2_node_id_t id,
+                                 const std::shared_ptr<DecodeInterface>& intfImpl)
+      : mDebugStreamId(debugStreamId),
+        mIntfImpl(intfImpl),
+        mIntf(std::make_shared<SimpleInterface<DecodeInterface>>(name.c_str(), id, mIntfImpl)) {
     ALOGV("%s(%s)", __func__, name.c_str());
-
-    sConcurrentInstances.fetch_add(1, std::memory_order_relaxed);
     mIsSecure = name.find(".secure") != std::string::npos;
 }
 
-V4L2DecodeComponent::~V4L2DecodeComponent() {
+DecodeComponent::~DecodeComponent() {
     ALOGV("%s()", __func__);
-
-    release();
-
-    sConcurrentInstances.fetch_sub(1, std::memory_order_relaxed);
+    if (mDecoderThread.IsRunning() && !mDecoderTaskRunner->RunsTasksInCurrentSequence()) {
+        mDecoderTaskRunner->PostTask(FROM_HERE,
+                                     ::base::BindOnce(&DecodeComponent::releaseTask, mWeakThis));
+        mDecoderThread.Stop();
+    }
     ALOGV("%s() done", __func__);
 }
 
-c2_status_t V4L2DecodeComponent::start() {
+c2_status_t DecodeComponent::start() {
     ALOGV("%s()", __func__);
     std::lock_guard<std::mutex> lock(mStartStopLock);
 
@@ -205,7 +165,7 @@ c2_status_t V4L2DecodeComponent::start() {
     c2_status_t status = C2_CORRUPTED;
     ::base::WaitableEvent done;
     mDecoderTaskRunner->PostTask(
-            FROM_HERE, ::base::BindOnce(&V4L2DecodeComponent::startTask, mWeakThis,
+            FROM_HERE, ::base::BindOnce(&DecodeComponent::startTask, mWeakThis,
                                         ::base::Unretained(&status), ::base::Unretained(&done)));
     done.Wait();
 
@@ -213,55 +173,15 @@ c2_status_t V4L2DecodeComponent::start() {
     return status;
 }
 
-void V4L2DecodeComponent::startTask(c2_status_t* status, ::base::WaitableEvent* done) {
-    ALOGV("%s()", __func__);
-    ALOG_ASSERT(mDecoderTaskRunner->RunsTasksInCurrentSequence());
-
-    ::base::ScopedClosureRunner done_caller(
-            ::base::BindOnce(&::base::WaitableEvent::Signal, ::base::Unretained(done)));
-    *status = C2_CORRUPTED;
-
-    const auto codec = mIntfImpl->getVideoCodec();
-    if (!codec) {
-        ALOGE("Failed to get video codec.");
-        return;
-    }
-    const size_t inputBufferSize = mIntfImpl->getInputBufferSize();
-    const size_t minNumOutputBuffers = getMinNumOutputBuffers(*codec);
-
-    // ::base::Unretained(this) is safe here because |mDecoder| is always destroyed before
-    // |mDecoderThread| is stopped, so |*this| is always valid during |mDecoder|'s lifetime.
-    mDecoder = V4L2Decoder::Create(*codec, inputBufferSize, minNumOutputBuffers,
-                                   ::base::BindRepeating(&V4L2DecodeComponent::getVideoFramePool,
-                                                         ::base::Unretained(this)),
-                                   ::base::BindRepeating(&V4L2DecodeComponent::onOutputFrameReady,
-                                                         ::base::Unretained(this)),
-                                   ::base::BindRepeating(&V4L2DecodeComponent::reportError,
-                                                         ::base::Unretained(this), C2_CORRUPTED),
-                                   mDecoderTaskRunner);
-    if (!mDecoder) {
-        ALOGE("Failed to create V4L2Decoder for %s", VideoCodecToString(*codec));
-        return;
-    }
-
-    // Get default color aspects on start.
-    if (!mIsSecure && *codec == VideoCodec::H264) {
-        if (mIntfImpl->queryColorAspects(&mCurrentColorAspects) != C2_OK) return;
-        mPendingColorAspectsChange = false;
-    }
-
-    *status = C2_OK;
-}
-
-std::unique_ptr<VideoFramePool> V4L2DecodeComponent::getVideoFramePool(const ui::Size& size,
-                                                                       HalPixelFormat pixelFormat,
-                                                                       size_t numBuffers) {
+std::unique_ptr<VideoFramePool> DecodeComponent::getVideoFramePool(const ui::Size& size,
+                                                                   HalPixelFormat pixelFormat,
+                                                                   size_t numBuffers) {
     ALOGV("%s()", __func__);
     ALOG_ASSERT(mDecoderTaskRunner->RunsTasksInCurrentSequence());
 
     auto sharedThis = weak_from_this().lock();
     if (sharedThis == nullptr) {
-        ALOGE("%s(): V4L2DecodeComponent instance is destroyed.", __func__);
+        ALOGE("%s(): DecodeComponent instance is destroyed.", __func__);
         return nullptr;
     }
 
@@ -289,7 +209,7 @@ std::unique_ptr<VideoFramePool> V4L2DecodeComponent::getVideoFramePool(const ui:
                                   mDecoderTaskRunner);
 }
 
-c2_status_t V4L2DecodeComponent::stop() {
+c2_status_t DecodeComponent::stop() {
     ALOGV("%s()", __func__);
     std::lock_guard<std::mutex> lock(mStartStopLock);
 
@@ -301,7 +221,7 @@ c2_status_t V4L2DecodeComponent::stop() {
 
     if (mDecoderThread.IsRunning()) {
         mDecoderTaskRunner->PostTask(FROM_HERE,
-                                     ::base::BindOnce(&V4L2DecodeComponent::stopTask, mWeakThis));
+                                     ::base::BindOnce(&DecodeComponent::stopTask, mWeakThis));
         mDecoderThread.Stop();
         mDecoderTaskRunner = nullptr;
     }
@@ -310,7 +230,8 @@ c2_status_t V4L2DecodeComponent::stop() {
     return C2_OK;
 }
 
-void V4L2DecodeComponent::stopTask() {
+void DecodeComponent::stopTask() {
+    ATRACE_CALL();
     ALOGV("%s()", __func__);
     ALOG_ASSERT(mDecoderTaskRunner->RunsTasksInCurrentSequence());
 
@@ -320,19 +241,19 @@ void V4L2DecodeComponent::stopTask() {
     releaseTask();
 }
 
-c2_status_t V4L2DecodeComponent::reset() {
+c2_status_t DecodeComponent::reset() {
     ALOGV("%s()", __func__);
 
     return stop();
 }
 
-c2_status_t V4L2DecodeComponent::release() {
+c2_status_t DecodeComponent::release() {
     ALOGV("%s()", __func__);
     std::lock_guard<std::mutex> lock(mStartStopLock);
 
     if (mDecoderThread.IsRunning()) {
-        mDecoderTaskRunner->PostTask(
-                FROM_HERE, ::base::BindOnce(&V4L2DecodeComponent::releaseTask, mWeakThis));
+        mDecoderTaskRunner->PostTask(FROM_HERE,
+                                     ::base::BindOnce(&DecodeComponent::releaseTask, mWeakThis));
         mDecoderThread.Stop();
         mDecoderTaskRunner = nullptr;
     }
@@ -341,7 +262,8 @@ c2_status_t V4L2DecodeComponent::release() {
     return C2_OK;
 }
 
-void V4L2DecodeComponent::releaseTask() {
+void DecodeComponent::releaseTask() {
+    ATRACE_CALL();
     ALOGV("%s()", __func__);
     ALOG_ASSERT(mDecoderTaskRunner->RunsTasksInCurrentSequence());
 
@@ -349,8 +271,8 @@ void V4L2DecodeComponent::releaseTask() {
     mDecoder = nullptr;
 }
 
-c2_status_t V4L2DecodeComponent::setListener_vb(
-        const std::shared_ptr<C2Component::Listener>& listener, c2_blocking_t mayBlock) {
+c2_status_t DecodeComponent::setListener_vb(const std::shared_ptr<C2Component::Listener>& listener,
+                                            c2_blocking_t mayBlock) {
     ALOGV("%s()", __func__);
 
     auto currentState = mComponentState.load();
@@ -372,14 +294,14 @@ c2_status_t V4L2DecodeComponent::setListener_vb(
     }
 
     ::base::WaitableEvent done;
-    mDecoderTaskRunner->PostTask(FROM_HERE, ::base::Bind(&V4L2DecodeComponent::setListenerTask,
-                                                         mWeakThis, listener, &done));
+    mDecoderTaskRunner->PostTask(
+            FROM_HERE, ::base::Bind(&DecodeComponent::setListenerTask, mWeakThis, listener, &done));
     done.Wait();
     return C2_OK;
 }
 
-void V4L2DecodeComponent::setListenerTask(const std::shared_ptr<Listener>& listener,
-                                          ::base::WaitableEvent* done) {
+void DecodeComponent::setListenerTask(const std::shared_ptr<Listener>& listener,
+                                      ::base::WaitableEvent* done) {
     ALOGV("%s()", __func__);
     ALOG_ASSERT(mDecoderTaskRunner->RunsTasksInCurrentSequence());
 
@@ -387,7 +309,7 @@ void V4L2DecodeComponent::setListenerTask(const std::shared_ptr<Listener>& liste
     done->Signal();
 }
 
-c2_status_t V4L2DecodeComponent::queue_nb(std::list<std::unique_ptr<C2Work>>* const items) {
+c2_status_t DecodeComponent::queue_nb(std::list<std::unique_ptr<C2Work>>* const items) {
     ALOGV("%s()", __func__);
 
     auto currentState = mComponentState.load();
@@ -397,15 +319,22 @@ c2_status_t V4L2DecodeComponent::queue_nb(std::list<std::unique_ptr<C2Work>>* co
     }
 
     while (!items->empty()) {
+        if (ATRACE_ENABLED()) {
+            const std::string atraceLabel = ::base::StringPrintf("#%u C2Work", mDebugStreamId);
+            ATRACE_ASYNC_BEGIN(atraceLabel.c_str(),
+                               items->front()->input.ordinal.frameIndex.peekull());
+        }
+
         mDecoderTaskRunner->PostTask(FROM_HERE,
-                                     ::base::BindOnce(&V4L2DecodeComponent::queueTask, mWeakThis,
+                                     ::base::BindOnce(&DecodeComponent::queueTask, mWeakThis,
                                                       std::move(items->front())));
         items->pop_front();
     }
     return C2_OK;
 }
 
-void V4L2DecodeComponent::queueTask(std::unique_ptr<C2Work> work) {
+void DecodeComponent::queueTask(std::unique_ptr<C2Work> work) {
+    ATRACE_CALL();
     ALOGV("%s(): flags=0x%x, index=%llu, timestamp=%llu", __func__, work->input.flags,
           work->input.ordinal.frameIndex.peekull(), work->input.ordinal.timestamp.peekull());
     ALOG_ASSERT(mDecoderTaskRunner->RunsTasksInCurrentSequence());
@@ -440,7 +369,8 @@ void V4L2DecodeComponent::queueTask(std::unique_ptr<C2Work> work) {
     pumpPendingWorks();
 }
 
-void V4L2DecodeComponent::pumpPendingWorks() {
+void DecodeComponent::pumpPendingWorks() {
+    ATRACE_CALL();
     ALOGV("%s()", __func__);
     ALOG_ASSERT(mDecoderTaskRunner->RunsTasksInCurrentSequence());
 
@@ -466,43 +396,15 @@ void V4L2DecodeComponent::pumpPendingWorks() {
         ALOGW_IF(!res.second, "We already inserted bitstreamId %d to decoder?", bitstreamId);
 
         if (!isEmptyWork) {
-            // If input.buffers is not empty, the buffer should have meaningful content inside.
-            C2ConstLinearBlock linearBlock =
-                    work->input.buffers.front()->data().linearBlocks().front();
-            ALOG_ASSERT(linearBlock.size() > 0u, "Input buffer of work(%d) is empty.", bitstreamId);
-
-            // Try to parse color aspects from bitstream for CSD work of non-secure H264 codec.
-            if (isCSDWork && !mIsSecure && (mIntfImpl->getVideoCodec() == VideoCodec::H264)) {
-                C2StreamColorAspectsInfo::input codedAspects = {0u};
-                if (parseCodedColorAspects(linearBlock, &codedAspects)) {
-                    std::vector<std::unique_ptr<C2SettingResult>> failures;
-                    c2_status_t status =
-                            mIntfImpl->config({&codedAspects}, C2_MAY_BLOCK, &failures);
-                    if (status != C2_OK) {
-                        ALOGE("Failed to config color aspects to interface: %d", status);
-                        reportError(status);
-                        return;
-                    }
-
-                    // Record current frame index, color aspects should be updated only for output
-                    // buffers whose frame indices are not less than this one.
-                    mPendingColorAspectsChange = true;
-                    mPendingColorAspectsChangeFrameIndex = work->input.ordinal.frameIndex.peeku();
-                }
+            if (isCSDWork) {
+                processCSDWork(bitstreamId, work);
+            } else {
+                processWork(bitstreamId, work);
             }
-
-            std::unique_ptr<ConstBitstreamBuffer> buffer = std::make_unique<ConstBitstreamBuffer>(
-                    bitstreamId, linearBlock, linearBlock.offset(), linearBlock.size());
-            if (!buffer) {
-                reportError(C2_CORRUPTED);
-                return;
-            }
-            mDecoder->decode(std::move(buffer), ::base::BindOnce(&V4L2DecodeComponent::onDecodeDone,
-                                                                 mWeakThis, bitstreamId));
         }
 
         if (isEOSWork) {
-            mDecoder->drain(::base::BindOnce(&V4L2DecodeComponent::onDrainDone, mWeakThis));
+            mDecoder->drain(::base::BindOnce(&DecodeComponent::onDrainDone, mWeakThis));
             mIsDraining = true;
         }
 
@@ -511,7 +413,63 @@ void V4L2DecodeComponent::pumpPendingWorks() {
     }
 }
 
-void V4L2DecodeComponent::onDecodeDone(int32_t bitstreamId, VideoDecoder::DecodeStatus status) {
+void DecodeComponent::processCSDWork(const int32_t bitstreamId, const C2Work* work) {
+    // If input.buffers is not empty, the buffer should have meaningful content inside.
+    C2ConstLinearBlock linearBlock = work->input.buffers.front()->data().linearBlocks().front();
+    ALOG_ASSERT(linearBlock.size() > 0u, "Input buffer of work(%d) is empty.", bitstreamId);
+
+    if (mIntfImpl->getVideoCodec() == VideoCodec::VP9) {
+        // The VP9 decoder does not support and does not need the Codec Specific Data (CSD):
+        // https://www.webmproject.org/docs/container/#vp9-codec-feature-metadata-codecprivate.
+        // The most of its content (profile, level, bit depth and chroma subsampling)
+        // can be extracted directly from VP9 bitstream. Ignore CSD if it was passed.
+        reportWorkIfFinished(bitstreamId);
+        return;
+    } else if ((!mIsSecure && mIntfImpl->getVideoCodec() == VideoCodec::H264) ||
+               mIntfImpl->getVideoCodec() == VideoCodec::HEVC) {
+        // Try to parse color aspects from bitstream for CSD work of non-secure H264 codec or HEVC
+        // codec (HEVC will only be CENCv3 which is parseable for secure).
+        C2StreamColorAspectsInfo::input codedAspects = {0u};
+        if (parseCodedColorAspects(linearBlock, mIntfImpl->getVideoCodec(), &codedAspects)) {
+            std::vector<std::unique_ptr<C2SettingResult>> failures;
+            c2_status_t status = mIntfImpl->config({&codedAspects}, C2_MAY_BLOCK, &failures);
+            if (status != C2_OK) {
+                ALOGE("Failed to config color aspects to interface: %d", status);
+                reportError(status);
+                return;
+            }
+            // Record current frame index, color aspects should be updated only for output
+            // buffers whose frame indices are not less than this one.
+            mPendingColorAspectsChange = true;
+            mPendingColorAspectsChangeFrameIndex = work->input.ordinal.frameIndex.peeku();
+        }
+    }
+
+    processWorkBuffer(bitstreamId, linearBlock);
+}
+
+void DecodeComponent::processWork(const int32_t bitstreamId, const C2Work* work) {
+    // If input.buffers is not empty, the buffer should have meaningful content inside.
+    C2ConstLinearBlock linearBlock = work->input.buffers.front()->data().linearBlocks().front();
+    ALOG_ASSERT(linearBlock.size() > 0u, "Input buffer of work(%d) is empty.", bitstreamId);
+
+    processWorkBuffer(bitstreamId, linearBlock);
+}
+
+void DecodeComponent::processWorkBuffer(const int32_t bitstreamId,
+                                        const C2ConstLinearBlock& linearBlock) {
+    std::unique_ptr<ConstBitstreamBuffer> buffer = std::make_unique<ConstBitstreamBuffer>(
+            bitstreamId, linearBlock, linearBlock.offset(), linearBlock.size());
+    if (!buffer) {
+        reportError(C2_CORRUPTED);
+        return;
+    }
+    mDecoder->decode(std::move(buffer),
+                     ::base::BindOnce(&DecodeComponent::onDecodeDone, mWeakThis, bitstreamId));
+}
+
+void DecodeComponent::onDecodeDone(int32_t bitstreamId, VideoDecoder::DecodeStatus status) {
+    ATRACE_CALL();
     ALOGV("%s(bitstreamId=%d, status=%s)", __func__, bitstreamId,
           VideoDecoder::DecodeStatusToString(status));
     ALOG_ASSERT(mDecoderTaskRunner->RunsTasksInCurrentSequence());
@@ -548,7 +506,7 @@ void V4L2DecodeComponent::onDecodeDone(int32_t bitstreamId, VideoDecoder::Decode
     }
 }
 
-void V4L2DecodeComponent::onOutputFrameReady(std::unique_ptr<VideoFrame> frame) {
+void DecodeComponent::onOutputFrameReady(std::unique_ptr<VideoFrame> frame) {
     ALOGV("%s(bitstreamId=%d)", __func__, frame->getBitstreamId());
     ALOG_ASSERT(mDecoderTaskRunner->RunsTasksInCurrentSequence());
 
@@ -583,8 +541,9 @@ void V4L2DecodeComponent::onOutputFrameReady(std::unique_ptr<VideoFrame> frame) 
     pumpReportWork();
 }
 
-void V4L2DecodeComponent::detectNoShowFrameWorksAndReportIfFinished(
+void DecodeComponent::detectNoShowFrameWorksAndReportIfFinished(
         const C2WorkOrdinalStruct& currOrdinal) {
+    ATRACE_CALL();
     ALOGV("%s()", __func__);
     ALOG_ASSERT(mDecoderTaskRunner->RunsTasksInCurrentSequence());
 
@@ -613,7 +572,8 @@ void V4L2DecodeComponent::detectNoShowFrameWorksAndReportIfFinished(
     for (const int32_t bitstreamId : noShowFrameBitstreamIds) reportWorkIfFinished(bitstreamId);
 }
 
-void V4L2DecodeComponent::pumpReportWork() {
+void DecodeComponent::pumpReportWork() {
+    ATRACE_CALL();
     ALOGV("%s()", __func__);
     ALOG_ASSERT(mDecoderTaskRunner->RunsTasksInCurrentSequence());
 
@@ -623,7 +583,8 @@ void V4L2DecodeComponent::pumpReportWork() {
     }
 }
 
-bool V4L2DecodeComponent::reportWorkIfFinished(int32_t bitstreamId) {
+bool DecodeComponent::reportWorkIfFinished(int32_t bitstreamId) {
+    ATRACE_CALL();
     ALOGV("%s(bitstreamId = %d)", __func__, bitstreamId);
     ALOG_ASSERT(mDecoderTaskRunner->RunsTasksInCurrentSequence());
 
@@ -657,7 +618,8 @@ bool V4L2DecodeComponent::reportWorkIfFinished(int32_t bitstreamId) {
     return reportWork(std::move(work));
 }
 
-bool V4L2DecodeComponent::reportEOSWork() {
+bool DecodeComponent::reportEOSWork() {
+    ATRACE_CALL();
     ALOGV("%s()", __func__);
     ALOG_ASSERT(mDecoderTaskRunner->RunsTasksInCurrentSequence());
 
@@ -691,7 +653,8 @@ bool V4L2DecodeComponent::reportEOSWork() {
     return reportWork(std::move(eosWork));
 }
 
-bool V4L2DecodeComponent::reportWork(std::unique_ptr<C2Work> work) {
+bool DecodeComponent::reportWork(std::unique_ptr<C2Work> work) {
+    ATRACE_CALL();
     ALOGV("%s(work=%llu)", __func__, work->input.ordinal.frameIndex.peekull());
     ALOG_ASSERT(mDecoderTaskRunner->RunsTasksInCurrentSequence());
 
@@ -700,14 +663,19 @@ bool V4L2DecodeComponent::reportWork(std::unique_ptr<C2Work> work) {
         return false;
     }
 
+    if (ATRACE_ENABLED()) {
+        const std::string atraceLabel = ::base::StringPrintf("#%u C2Work", mDebugStreamId);
+        ATRACE_ASYNC_END(atraceLabel.c_str(), work->input.ordinal.frameIndex.peekull());
+    }
     std::list<std::unique_ptr<C2Work>> finishedWorks;
     finishedWorks.emplace_back(std::move(work));
     mListener->onWorkDone_nb(weak_from_this(), std::move(finishedWorks));
     return true;
 }
 
-c2_status_t V4L2DecodeComponent::flush_sm(
-        flush_mode_t mode, std::list<std::unique_ptr<C2Work>>* const /* flushedWork */) {
+c2_status_t DecodeComponent::flush_sm(flush_mode_t mode,
+                                      std::list<std::unique_ptr<C2Work>>* const /* flushedWork */) {
+    ATRACE_CALL();
     ALOGV("%s()", __func__);
 
     auto currentState = mComponentState.load();
@@ -720,11 +688,12 @@ c2_status_t V4L2DecodeComponent::flush_sm(
     }
 
     mDecoderTaskRunner->PostTask(FROM_HERE,
-                                 ::base::BindOnce(&V4L2DecodeComponent::flushTask, mWeakThis));
+                                 ::base::BindOnce(&DecodeComponent::flushTask, mWeakThis));
     return C2_OK;
 }
 
-void V4L2DecodeComponent::flushTask() {
+void DecodeComponent::flushTask() {
+    ATRACE_CALL();
     ALOGV("%s()", __func__);
     ALOG_ASSERT(mDecoderTaskRunner->RunsTasksInCurrentSequence());
 
@@ -735,7 +704,7 @@ void V4L2DecodeComponent::flushTask() {
     mIsDraining = false;
 }
 
-void V4L2DecodeComponent::reportAbandonedWorks() {
+void DecodeComponent::reportAbandonedWorks() {
     ALOGV("%s()", __func__);
     ALOG_ASSERT(mDecoderTaskRunner->RunsTasksInCurrentSequence());
 
@@ -756,6 +725,11 @@ void V4L2DecodeComponent::reportAbandonedWorks() {
         if (!work->input.buffers.empty()) {
             work->input.buffers.front().reset();
         }
+
+        if (ATRACE_ENABLED()) {
+            const std::string atraceLabel = ::base::StringPrintf("#%u C2Work", mDebugStreamId);
+            ATRACE_ASYNC_END(atraceLabel.c_str(), work->input.ordinal.frameIndex.peekull());
+        }
     }
     if (!abandonedWorks.empty()) {
         if (!mListener) {
@@ -766,7 +740,7 @@ void V4L2DecodeComponent::reportAbandonedWorks() {
     }
 }
 
-c2_status_t V4L2DecodeComponent::drain_nb(drain_mode_t mode) {
+c2_status_t DecodeComponent::drain_nb(drain_mode_t mode) {
     ALOGV("%s(mode=%u)", __func__, mode);
 
     auto currentState = mComponentState.load();
@@ -784,12 +758,13 @@ c2_status_t V4L2DecodeComponent::drain_nb(drain_mode_t mode) {
 
     case DRAIN_COMPONENT_WITH_EOS:
         mDecoderTaskRunner->PostTask(FROM_HERE,
-                                     ::base::BindOnce(&V4L2DecodeComponent::drainTask, mWeakThis));
+                                     ::base::BindOnce(&DecodeComponent::drainTask, mWeakThis));
         return C2_OK;
     }
 }
 
-void V4L2DecodeComponent::drainTask() {
+void DecodeComponent::drainTask() {
+    ATRACE_CALL();
     ALOGV("%s()", __func__);
     ALOG_ASSERT(mDecoderTaskRunner->RunsTasksInCurrentSequence());
 
@@ -802,12 +777,12 @@ void V4L2DecodeComponent::drainTask() {
 
     if (!mWorksAtDecoder.empty()) {
         ALOGV("Drain the pending works at the decoder.");
-        mDecoder->drain(::base::BindOnce(&V4L2DecodeComponent::onDrainDone, mWeakThis));
+        mDecoder->drain(::base::BindOnce(&DecodeComponent::onDrainDone, mWeakThis));
         mIsDraining = true;
     }
 }
 
-void V4L2DecodeComponent::onDrainDone(VideoDecoder::DecodeStatus status) {
+void DecodeComponent::onDrainDone(VideoDecoder::DecodeStatus status) {
     ALOGV("%s(status=%s)", __func__, VideoDecoder::DecodeStatusToString(status));
     ALOG_ASSERT(mDecoderTaskRunner->RunsTasksInCurrentSequence());
 
@@ -827,12 +802,12 @@ void V4L2DecodeComponent::onDrainDone(VideoDecoder::DecodeStatus status) {
         }
 
         mDecoderTaskRunner->PostTask(
-                FROM_HERE, ::base::BindOnce(&V4L2DecodeComponent::pumpPendingWorks, mWeakThis));
+                FROM_HERE, ::base::BindOnce(&DecodeComponent::pumpPendingWorks, mWeakThis));
         return;
     }
 }
 
-void V4L2DecodeComponent::reportError(c2_status_t error) {
+void DecodeComponent::reportError(c2_status_t error) {
     ALOGE("%s(error=%u)", __func__, static_cast<uint32_t>(error));
     ALOG_ASSERT(mDecoderTaskRunner->RunsTasksInCurrentSequence());
 
@@ -846,16 +821,16 @@ void V4L2DecodeComponent::reportError(c2_status_t error) {
     mListener->onError_nb(weak_from_this(), static_cast<uint32_t>(error));
 }
 
-c2_status_t V4L2DecodeComponent::announce_nb(const std::vector<C2WorkOutline>& /* items */) {
+c2_status_t DecodeComponent::announce_nb(const std::vector<C2WorkOutline>& /* items */) {
     return C2_OMITTED;  // Tunneling is not supported by now
 }
 
-std::shared_ptr<C2ComponentInterface> V4L2DecodeComponent::intf() {
+std::shared_ptr<C2ComponentInterface> DecodeComponent::intf() {
     return mIntf;
 }
 
 // static
-const char* V4L2DecodeComponent::ComponentStateToString(ComponentState state) {
+const char* DecodeComponent::ComponentStateToString(ComponentState state) {
     switch (state) {
     case ComponentState::STOPPED:
         return "STOPPED";
