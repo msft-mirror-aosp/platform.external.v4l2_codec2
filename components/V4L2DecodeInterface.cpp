@@ -34,6 +34,8 @@ std::optional<VideoCodec> getCodecFromComponentName(const std::string& name) {
         return VideoCodec::VP8;
     if (name == V4L2ComponentName::kVP9Decoder || name == V4L2ComponentName::kVP9SecureDecoder)
         return VideoCodec::VP9;
+    if (name == V4L2ComponentName::kHEVCDecoder || name == V4L2ComponentName::kHEVCSecureDecoder)
+        return VideoCodec::HEVC;
 
     ALOGE("Unknown name: %s", name.c_str());
     return std::nullopt;
@@ -179,6 +181,35 @@ V4L2DecodeInterface::V4L2DecodeInterface(const std::string& name,
                         .withSetter(ProfileLevelSetter)
                         .build());
         break;
+
+    case VideoCodec::HEVC:
+        inputMime = MEDIA_MIMETYPE_VIDEO_HEVC;
+        addParameter(
+                DefineParam(mProfileLevel, C2_PARAMKEY_PROFILE_LEVEL)
+                        .withDefault(new C2StreamProfileLevelInfo::input(
+                                0u, C2Config::PROFILE_HEVC_MAIN, C2Config::LEVEL_HEVC_MAIN_5_1))
+                        .withFields({C2F(mProfileLevel, profile)
+                                             .oneOf({C2Config::PROFILE_HEVC_MAIN,
+                                                     C2Config::PROFILE_HEVC_MAIN_STILL}),
+                                     C2F(mProfileLevel, level)
+                                             .oneOf({C2Config::LEVEL_HEVC_MAIN_1,
+                                                     C2Config::LEVEL_HEVC_MAIN_2,
+                                                     C2Config::LEVEL_HEVC_MAIN_2_1,
+                                                     C2Config::LEVEL_HEVC_MAIN_3,
+                                                     C2Config::LEVEL_HEVC_MAIN_3_1,
+                                                     C2Config::LEVEL_HEVC_MAIN_4,
+                                                     C2Config::LEVEL_HEVC_MAIN_4_1,
+                                                     C2Config::LEVEL_HEVC_MAIN_5,
+                                                     C2Config::LEVEL_HEVC_MAIN_5_1,
+                                                     C2Config::LEVEL_HEVC_MAIN_5_2,
+                                                     C2Config::LEVEL_HEVC_HIGH_4,
+                                                     C2Config::LEVEL_HEVC_HIGH_4_1,
+                                                     C2Config::LEVEL_HEVC_HIGH_5,
+                                                     C2Config::LEVEL_HEVC_HIGH_5_1,
+                                                     C2Config::LEVEL_HEVC_HIGH_5_2})})
+                        .withSetter(ProfileLevelSetter)
+                        .build());
+        break;
     }
 
     addParameter(
@@ -236,9 +267,9 @@ V4L2DecodeInterface::V4L2DecodeInterface(const std::string& name,
     const C2Allocator::id_t inputAllocators[] = {secureMode ? V4L2AllocatorId::SECURE_LINEAR
                                                             : C2AllocatorStore::DEFAULT_LINEAR};
 
-    const C2Allocator::id_t outputAllocators[] = {V4L2AllocatorId::V4L2_BUFFERPOOL};
+    const C2Allocator::id_t outputAllocators[] = {C2PlatformAllocatorStore::GRALLOC};
     const C2Allocator::id_t surfaceAllocator =
-            secureMode ? V4L2AllocatorId::SECURE_GRAPHIC : V4L2AllocatorId::V4L2_BUFFERQUEUE;
+            secureMode ? V4L2AllocatorId::SECURE_GRAPHIC : C2PlatformAllocatorStore::BUFFERQUEUE;
     const C2BlockPool::local_id_t outputBlockPools[] = {C2BlockPool::BASIC_GRAPHIC};
 
     addParameter(
@@ -345,6 +376,8 @@ uint32_t V4L2DecodeInterface::getOutputDelay(VideoCodec codec) {
         // queued before being able to output the associated decoded buffers. We need to tell the
         // codec2 framework that it should not stop queuing new work items until the maximum number
         // of frame reordering is reached, to avoid stalling the decoder.
+        return 16;
+    case VideoCodec::HEVC:
         return 16;
     case VideoCodec::VP8:
         return 0;

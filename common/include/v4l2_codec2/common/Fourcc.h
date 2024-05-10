@@ -54,6 +54,8 @@ public:
         // it as-is.
         RGB4 = composeFourcc('R', 'G', 'B', '4'),
 
+        BGR4 = composeFourcc('B', 'G', 'R', '4'),
+
         // YUV420 single-planar formats.
         // https://linuxtv.org/downloads/v4l-dvb-apis/uapi/v4l/pixfmt-yuv420.html
         // Maps to PIXEL_FORMAT_I420, V4L2_PIX_FMT_YUV420, VA_FOURCC_I420.

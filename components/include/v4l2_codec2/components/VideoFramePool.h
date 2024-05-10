@@ -44,12 +44,13 @@ public:
 
 private:
     // |blockPool| is the C2BlockPool that we fetch graphic blocks from.
+    // |maxBufferCount| maximum number of buffer that should should provide to client
     // |size| is the resolution size of the required graphic blocks.
     // |pixelFormat| is the pixel format of the required graphic blocks.
     // |isSecure| indicates the video stream is encrypted or not.
     // All public methods and the callbacks should be run on |taskRunner|.
-    VideoFramePool(std::shared_ptr<C2BlockPool> blockPool, const ui::Size& size,
-                   HalPixelFormat pixelFormat, C2MemoryUsage memoryUsage,
+    VideoFramePool(std::shared_ptr<C2BlockPool> blockPool, const size_t maxBufferCount,
+                   const ui::Size& size, HalPixelFormat pixelFormat, C2MemoryUsage memoryUsage,
                    scoped_refptr<::base::SequencedTaskRunner> taskRunner);
     bool initialize();
     void destroyTask();
@@ -59,20 +60,20 @@ private:
     void getVideoFrameTask();
     void onVideoFrameReady(std::optional<FrameWithBlockId> frameWithBlockId);
 
-    // Ask |blockPool| to allocate the specified number of buffers.
-    // |bufferCount| is the number of requested buffers.
-    static c2_status_t requestNewBufferSet(C2BlockPool& blockPool, int32_t bufferCount,
-                                           const ui::Size& size, uint32_t format,
-                                           C2MemoryUsage usage);
+    // Returns true if a buffer shall not be handed to client.
+    bool shouldDropBuffer(uint32_t bufferId);
 
     static std::optional<uint32_t> getBufferIdFromGraphicBlock(C2BlockPool& blockPool,
                                                                const C2Block2D& block);
 
-    // Ask |blockPool| to notify when a block is available via |cb|.
-    // Return true if |blockPool| supports notifying buffer available.
-    static bool setNotifyBlockAvailableCb(C2BlockPool& blockPool, ::base::OnceClosure cb);
-
     std::shared_ptr<C2BlockPool> mBlockPool;
+
+    // Holds the number of maximum amount of buffers that VideoFramePool
+    // should provide to client.
+    size_t mMaxBufferCount;
+    // Contains known buffer ids that are valid for the pool.
+    std::set<uint32_t> mBuffers;
+
     const ui::Size mSize;
     const HalPixelFormat mPixelFormat;
     const C2MemoryUsage mMemoryUsage;

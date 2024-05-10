@@ -517,6 +517,32 @@ void V4L2EncodeComponent::queueTask(std::unique_ptr<C2Work> work) {
                 reportError(status);
                 return;
             }
+        } else {
+            // Android encoder framework reuses the same gpu buffers as
+            // inputs and doesn't call lock/unlock explicitly between writes.
+            // If there is format conversion, this is fine since we will
+            // read back what we've written first and then put it in another
+            // buffer. Whenever there is no format conversion, this causes
+            // sync issue on ARCVM since host side buffers never get updated.
+            // Fix this by explicitly calling lock/unlock before sending buffer
+            // to encoder.
+            const C2Handle* handle = inputBlock.handle();
+            uint32_t width, height, format, stride, generation, igbpSlot;
+            uint64_t usage, igbpId;
+            _UnwrapNativeCodec2GrallocMetadata(handle, &width, &height, &format, &usage, &stride,
+                                               &generation, &igbpId, &igbpSlot);
+            do {
+                if (!(usage & GRALLOC_USAGE_SW_WRITE_MASK)) break;
+                native_handle_t* gralloc_handle = UnwrapNativeCodec2GrallocHandle(handle);
+                if (nullptr == gralloc_handle) break;
+                sp<GraphicBuffer> buffer =
+                        new GraphicBuffer(gralloc_handle, GraphicBuffer::CLONE_HANDLE, width,
+                                          height, format, 1, usage, stride);
+                native_handle_delete(gralloc_handle);
+                void* pixels;
+                if (buffer->lock(GRALLOC_USAGE_SW_WRITE_OFTEN, &pixels)) break;
+                buffer->unlock();
+            } while (0);
         }
         if (!encode(inputBlock, index, timestamp)) {
             return;
@@ -652,6 +678,12 @@ bool V4L2EncodeComponent::initializeEncoder() {
     // Get the requested bitrate mode and bitrate. The C2 framework doesn't offer a parameter to
     // configure the peak bitrate, so we use a multiple of the target bitrate.
     mBitrateMode = mInterface->getBitrateMode();
+    if (property_get_bool("persist.vendor.v4l2_codec2.disable_vbr", false)) {
+        // NOTE: This is a workaround for b/235771157.
+        ALOGW("VBR is disabled on this device");
+        mBitrateMode = C2Config::BITRATE_CONST;
+    }
+
     mBitrate = mInterface->getBitrate();
 
     mEncoder = V4L2Encoder::create(
