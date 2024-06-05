@@ -9,7 +9,7 @@ package {
 
 cc_library {
     name: "libv4l2_codec2_common",
-    vendor: true,
+    vendor_available: true,
 
     defaults: [
         "libcodec2-impl-defaults",
@@ -20,11 +20,10 @@ cc_library {
         "EncodeHelpers.cpp",
         "FormatConverter.cpp",
         "Fourcc.cpp",
+        "H264NalParser.cpp",
+        "HEVCNalParser.cpp",
         "NalParser.cpp",
-        "V4L2ComponentCommon.cpp",
         "VideoTypes.cpp",
-        "V4L2Device.cpp",
-        "V4L2DevicePoller.cpp",
         "VideoPixelFormat.cpp",
     ],
 

@@ -7,18 +7,13 @@
 
 #include <stdint.h>
 
+#include <media/stagefright/foundation/ABitReader.h>
+
 namespace android {
 
-// Helper class to parse H264 NAL units from data.
+// Helper class to parse NAL units from data.
 class NalParser {
 public:
-    // Type of a IDR Slice NAL unit.
-    static constexpr uint8_t kIDRType = 5;
-    // Type of a SPS NAL unit.
-    static constexpr uint8_t kSPSType = 7;
-    // Type of a PPS NAL unit.
-    static constexpr uint8_t kPPSType = 8;
-
     // Parameters related to a video's color aspects.
     struct ColorAspects {
         uint32_t primaries;
@@ -28,6 +23,7 @@ public:
     };
 
     NalParser(const uint8_t* data, size_t length);
+    virtual ~NalParser() = default;
 
     // Locates the next NAL after |mNextNalStartCodePos|. If there is one, updates |mCurrNalDataPos|
     // to the first byte of the NAL data (start code is not included), and |mNextNalStartCodePos| to
@@ -38,7 +34,8 @@ public:
     bool locateNextNal();
 
     // Locate the sequence parameter set (SPS).
-    bool locateSPS();
+    virtual bool locateSPS() = 0;
+    virtual bool locateIDR() = 0;
 
     // Gets current NAL data (start code is not included).
     const uint8_t* data() const;
@@ -47,15 +44,21 @@ public:
     size_t length() const;
 
     // Get the type of the current NAL unit.
-    uint8_t type() const;
+    virtual uint8_t type() const = 0;
 
-    // Find the H.264 video's color aspects in the current SPS NAL.
-    bool findCodedColorAspects(ColorAspects* colorAspects);
+    // Find the video's color aspects in the current SPS NAL.
+    virtual bool findCodedColorAspects(ColorAspects* colorAspects) = 0;
 
-private:
+    // Read unsigned int encoded with exponential-golomb.
+    static bool parseUE(ABitReader* br, uint32_t* val);
+
+    // Read signed int encoded with exponential-golomb.
+    static bool parseSE(ABitReader* br, int32_t* val);
+
+protected:
     const uint8_t* findNextStartCodePos() const;
 
-    // The byte pattern for the start of a H264 NAL unit.
+    // The byte pattern for the start of a NAL unit.
     const uint8_t kNalStartCode[3] = {0x00, 0x00, 0x01};
     // The length in bytes of the NAL-unit start pattern.
     const size_t kNalStartCodeLength = 3;

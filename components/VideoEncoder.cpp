@@ -6,11 +6,12 @@
 
 namespace android {
 
-VideoEncoder::InputFrame::InputFrame(std::vector<int>&& fds, std::vector<VideoFramePlane>&& planes,
+VideoEncoder::InputFrame::InputFrame(std::vector<int>&& fds,
+                                     const std::vector<VideoFramePlane>& planes,
                                      VideoPixelFormat pixelFormat, uint64_t index,
                                      int64_t timestamp)
       : mFds(std::move(fds)),
-        mPlanes(std::move(planes)),
+        mPlanes(planes),
         mPixelFormat(pixelFormat),
         mIndex(index),
         mTimestamp(timestamp) {}
