@@ -35,6 +35,7 @@ enum class VideoPixelFormat {
     XR30,    // 32bpp BGRX, 10 bits per channel, 2 bits ignored, 1 plane
     XB30,    // 32bpp RGBX, 10 bits per channel, 2 bits ignored, 1 plane
     BGRA,    // 32bpp ARGB (byte-order), 1 plane.
+    RGBA,    // 32bpp ABGR (byte-order), 1 plane.
     // The P* in the formats below designates the number of bits per pixel component. I.e. P9 is
     // 9-bits per pixel component, P10 is 10-bits per pixel component, etc.
     YUV420P9,
