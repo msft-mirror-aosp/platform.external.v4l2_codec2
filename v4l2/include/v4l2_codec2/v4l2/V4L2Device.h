@@ -6,13 +6,14 @@
 // delegate/pass the device specific handling of any of the functionalities.
 // Note: ported from Chromium commit head: 2f13d62f0c0d, but some parts have been removed.
 
-#ifndef ANDROID_V4L2_CODEC2_COMMON_V4L2_DEVICE_H
-#define ANDROID_V4L2_CODEC2_COMMON_V4L2_DEVICE_H
+#ifndef ANDROID_V4L2_CODEC2_V4L2_V4L2_DEVICE_H
+#define ANDROID_V4L2_CODEC2_V4L2_V4L2_DEVICE_H
 
 #include <linux/videodev2.h>
 #include <stddef.h>
 #include <stdint.h>
 
+#include <cstdint>
 #include <optional>
 #include <vector>
 
@@ -23,8 +24,28 @@
 
 #include <ui/Size.h>
 #include <v4l2_codec2/common/Common.h>
-#include <v4l2_codec2/common/V4L2DevicePoller.h>
 #include <v4l2_codec2/common/VideoTypes.h>
+#include <v4l2_codec2/v4l2/V4L2DevicePoller.h>
+
+// VP8 parsed frames
+#ifndef V4L2_PIX_FMT_VP8_FRAME
+#define V4L2_PIX_FMT_VP8_FRAME v4l2_fourcc('V', 'P', '8', 'F')
+#endif
+
+// VP9 parsed frames
+#ifndef V4L2_PIX_FMT_VP9_FRAME
+#define V4L2_PIX_FMT_VP9_FRAME v4l2_fourcc('V', 'P', '9', 'F')
+#endif
+
+// H264 parsed slices
+#ifndef V4L2_PIX_FMT_H264_SLICE
+#define V4L2_PIX_FMT_H264_SLICE v4l2_fourcc('S', '2', '6', '4')
+#endif
+
+// HEVC parsed slices
+#ifndef V4L2_PIX_FMT_HEVC_SLICE
+#define V4L2_PIX_FMT_HEVC_SLICE v4l2_fourcc('S', '2', '6', '5')
+#endif
 
 namespace android {
 
@@ -39,6 +60,8 @@ struct V4L2ExtCtrl {
     V4L2ExtCtrl(uint32_t id, int32_t val);
     struct v4l2_ext_control ctrl;
 };
+
+bool isValidPixFmtForCodec(VideoCodec codec, uint32_t pixFmt);
 
 // A unique reference to a buffer for clients to prepare and submit.
 //
@@ -287,6 +310,8 @@ private:
     // Called when clients request a buffer to be queued.
     bool queueBuffer(struct v4l2_buffer* v4l2Buffer);
 
+    void reportTraceMetrics();
+
     const enum v4l2_buf_type mType;
     enum v4l2_memory mMemory = V4L2_MEMORY_MMAP;
     bool mIsStreaming = false;
@@ -319,38 +344,19 @@ private:
 
 class V4L2Device : public ::base::RefCountedThreadSafe<V4L2Device> {
 public:
-    // Specification of an encoding profile supported by an encoder.
-    struct SupportedEncodeProfile {
-        C2Config::profile_t profile = C2Config::PROFILE_UNUSED;
-        ui::Size min_resolution;
-        ui::Size max_resolution;
-        uint32_t max_framerate_numerator = 0;
-        uint32_t max_framerate_denominator = 0;
-    };
-    using SupportedEncodeProfiles = std::vector<SupportedEncodeProfile>;
-
-    // Specification of a decoding profile supported by an decoder.
-    // |max_resolution| and |min_resolution| are inclusive.
-    struct SupportedDecodeProfile {
-        C2Config::profile_t profile = C2Config::PROFILE_UNUSED;
-        ui::Size max_resolution;
-        ui::Size min_resolution;
-        bool encrypted_only = false;
-    };
-    using SupportedDecodeProfiles = std::vector<SupportedDecodeProfile>;
-
     // Utility format conversion functions
     // If there is no corresponding single- or multi-planar format, returns 0.
-    static uint32_t C2ProfileToV4L2PixFmt(C2Config::profile_t profile, bool sliceBased);
+    static uint32_t c2ProfileToV4L2PixFmt(C2Config::profile_t profile, bool sliceBased);
+    static C2Config::level_t v4L2LevelToC2Level(VideoCodec codec, uint32_t level);
     static C2Config::profile_t v4L2ProfileToC2Profile(VideoCodec codec, uint32_t profile);
-    std::vector<C2Config::profile_t> v4L2PixFmtToC2Profiles(uint32_t pixFmt, bool isEncoder);
+    static uint32_t videoCodecToPixFmt(VideoCodec codec);
     // Calculates the largest plane's allocation size requested by a V4L2 device.
     static ui::Size allocatedSizeFromV4L2Format(const struct v4l2_format& format);
 
     // Convert required H264 profile and level to V4L2 enums.
     static int32_t c2ProfileToV4L2H264Profile(C2Config::profile_t profile);
     static int32_t h264LevelIdcToV4L2H264Level(uint8_t levelIdc);
-    static v4l2_mpeg_video_bitrate_mode C2BitrateModeToV4L2BitrateMode(
+    static v4l2_mpeg_video_bitrate_mode c2BitrateModeToV4L2BitrateMode(
             C2Config::bitrate_mode_t bitrateMode);
 
     // Converts v4l2_memory to a string.
@@ -358,6 +364,11 @@ public:
 
     // Returns the printable name of a v4l2_buf_type.
     static const char* v4L2BufferTypeToString(const enum v4l2_buf_type bufType);
+
+    // Converts v4l2_buf_type to a string, used for tracing.
+    static std::string v4L2BufferTypeToATraceLabel(uint32_t debugStreamId,
+                                                   const enum v4l2_buf_type type,
+                                                   const char* label);
 
     // Composes human readable string of v4l2_format.
     static std::string v4L2FormatToString(const struct v4l2_format& format);
@@ -374,9 +385,28 @@ public:
 
     enum class Type { kDecoder, kEncoder };
 
+    // Gets supported coding formats for |type| device and |pixelFormats|
+    static SupportedProfiles getSupportedProfiles(Type type,
+                                                  const std::vector<uint32_t>& pixelFormats);
+
+    // Gets supported levels for all decoder devices
+    static std::vector<C2Config::level_t> getSupportedDecodeLevels(VideoCodec videoCodecType);
+
+    // Get first current profile for any device
+    static C2Config::profile_t getDefaultProfile(VideoCodec codec);
+
+    // Gets first current profile for any device
+    static C2Config::level_t getDefaultLevel(VideoCodec codec);
+
+    // Gets all capabilites of the decoder devices.
+    static SupportedCapabilities queryDecodingCapabilities(VideoCodec codec);
+
+    // Gets all capabilites of the encoder devices.
+    static SupportedCapabilities queryEncodingCapabilities(VideoCodec codec);
+
     // Create and initialize an appropriate V4L2Device instance for the current platform, or return
     // nullptr if not available.
-    static scoped_refptr<V4L2Device> create();
+    static scoped_refptr<V4L2Device> create(uint32_t debugStreamId = -1);
 
     // Open a V4L2 device of |type| for use with |v4l2PixFmt|. Return true on success. The device
     // will be closed in the destructor.
@@ -391,11 +421,12 @@ public:
 
     // This method sleeps until either:
     // - SetDevicePollInterrupt() is called (on another thread),
-    // - |pollDevice| is true, and there is new data to be read from the device,
-    //   or an event from the device has arrived; in the latter case
-    //   |*eventPending| will be set to true.
+    // - |pollDevice| is true, and there is new event from the device has arrived;
+    //   in this case |*eventPending| will be set to true.
+    // - |pollBuffers| is true and |pollDevice| is true and there is new data to
+    //   be read from the device; in this case |*buffersPending| will be set to true.
     // Returns false on error, true otherwise. This method should be called from a separate thread.
-    bool poll(bool pollDevice, bool* eventPending);
+    bool poll(bool pollDevice, bool pollBuffers, bool* eventPending, bool* buffersPending);
 
     // These methods are used to interrupt the thread sleeping on poll() and force it to return
     // regardless of device state, which is usually when the client is no longer interested in what
@@ -426,21 +457,24 @@ public:
     void getSupportedResolution(uint32_t pixelFormat, ui::Size* minResolution,
                                 ui::Size* maxResolution);
 
+    // Queries supported levels for |pixFmt| pixel format
+    std::vector<C2Config::level_t> queryC2Levels(uint32_t pixFmt);
+
+    // Queries supported profiles for |pixFmt| pixel format
+    std::vector<C2Config::profile_t> queryC2Profiles(uint32_t pixFmt);
+
+    // Queries supported pixel format for a |bufType| queue type
     std::vector<uint32_t> enumerateSupportedPixelformats(v4l2_buf_type bufType);
 
-    // Return supported profiles for decoder, including only profiles for given fourcc
-    // |pixelFormats|.
-    SupportedDecodeProfiles getSupportedDecodeProfiles(const size_t numFormats,
-                                                       const uint32_t pixelFormats[]);
-
-    // Return supported profiles for encoder.
-    SupportedEncodeProfiles getSupportedEncodeProfiles();
+    // Queries supported levels for |videoCodecType|
+    std::vector<C2Config::level_t> enumerateSupportedDecodeLevels(VideoCodec videoCodecType);
 
     // Start polling on this V4L2Device. |eventCallback| will be posted to the caller's sequence if
     // a buffer is ready to be dequeued and/or a V4L2 event has been posted. |errorCallback| will
     // be posted to the client's
     // sequence if a polling error has occurred.
-    bool startPolling(android::V4L2DevicePoller::EventCallback eventCallback,
+    bool startPolling(scoped_refptr<::base::SequencedTaskRunner> taskRunner,
+                      android::V4L2DevicePoller::EventCallback eventCallback,
                       ::base::RepeatingClosure errorCallback);
     // Stop polling this V4L2Device if polling was active. No new events will be posted after this
     // method has returned.
@@ -460,35 +494,31 @@ public:
     // Check whether the V4L2 device has the specified |capabilities|.
     bool hasCapabilities(uint32_t capabilities);
 
+    // Returns identifier used for debugging purposes.
+    uint32_t getDebugStreamId() { return mDebugStreamId; }
+
 private:
     // Vector of video device node paths and corresponding pixelformats supported by each device node.
-    using Devices = std::vector<std::pair<std::string, std::vector<uint32_t>>>;
+    using DeviceInfos = std::vector<std::pair<std::string, std::vector<uint32_t>>>;
+
+    // Enumerate all V4L2 devices on the system for |type| and return them
+    static const DeviceInfos& getDeviceInfosForType(V4L2Device::Type type);
 
     friend class ::base::RefCountedThreadSafe<V4L2Device>;
-    V4L2Device();
+    V4L2Device(uint32_t debugStreamId);
     ~V4L2Device();
 
     V4L2Device(const V4L2Device&) = delete;
     V4L2Device& operator=(const V4L2Device&) = delete;
 
-    SupportedDecodeProfiles enumerateSupportedDecodeProfiles(const size_t numFormats,
-                                                             const uint32_t pixelFormats[]);
-
-    SupportedEncodeProfiles enumerateSupportedEncodeProfiles();
+    SupportedProfiles enumerateSupportedProfiles(V4L2Device::Type type,
+                                                 const std::vector<uint32_t>& pixelFormats);
 
     // Open device node for |path| as a device of |type|.
     bool openDevicePath(const std::string& path, Type type);
 
     // Close the currently open device.
     void closeDevice();
-
-    // Enumerate all V4L2 devices on the system for |type| and store the results under
-    // mDevicesByType[type].
-    void enumerateDevicesForType(V4L2Device::Type type);
-
-    // Return device information for all devices of |type| available in the system. Enumerates and
-    // queries devices on first run and caches the results for subsequent calls.
-    const Devices& getDevicesForType(V4L2Device::Type type);
 
     // Return device node path for device of |type| supporting |pixFmt|, or an empty string if the
     // given combination is not supported by the system.
@@ -497,8 +527,8 @@ private:
     // Callback that is called upon a queue's destruction, to cleanup its pointer in mQueues.
     void onQueueDestroyed(v4l2_buf_type buf_type);
 
-    // Stores information for all devices available on the system for each device Type.
-    std::map<V4L2Device::Type, Devices> mDevicesByType;
+    // Identifier used for debugging purposes.
+    uint32_t mDebugStreamId;
 
     // The actual device fd.
     ::base::ScopedFD mDeviceFd;
@@ -518,4 +548,4 @@ private:
 
 }  // namespace android
 
-#endif  // ANDROID_V4L2_CODEC2_COMMON_V4L2_DEVICE_H
+#endif  // ANDROID_V4L2_CODEC2_V4L2_V4L2_DEVICE_H
