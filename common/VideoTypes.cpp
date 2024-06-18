@@ -30,6 +30,8 @@ const char* profileToString(C2Config::profile_t profile) {
         return "unused";
     case C2Config::PROFILE_AVC_BASELINE:
         return "h264 baseline";
+    case C2Config::PROFILE_AVC_CONSTRAINED_BASELINE:
+        return "h264 constrained baseline";
     case C2Config::PROFILE_AVC_MAIN:
         return "h264 main";
     case C2Config::PROFILE_AVC_EXTENDED:

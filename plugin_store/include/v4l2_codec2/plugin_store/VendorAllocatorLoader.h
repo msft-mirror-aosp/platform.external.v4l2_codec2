@@ -18,6 +18,8 @@ namespace android {
 class VendorAllocatorLoader {
 public:
     using CreateAllocatorFunc = ::C2Allocator* (*)(C2Allocator::id_t /* allocatorId */);
+    using CreateBlockPoolFunc = ::C2BlockPool* (*)(C2Allocator::id_t /* allocatorId */,
+                                                   C2BlockPool::local_id_t /* poolId */);
 
     static std::unique_ptr<VendorAllocatorLoader> Create();
     ~VendorAllocatorLoader();
@@ -26,11 +28,15 @@ public:
     // V4L2AllocatorId.h.
     C2Allocator* createAllocator(C2Allocator::id_t allocatorId);
 
+    C2BlockPool* createBlockPool(C2Allocator::id_t allocatorId, C2BlockPool::local_id_t poolId);
+
 private:
-    VendorAllocatorLoader(void* libHandle, CreateAllocatorFunc createAllocatorFunc);
+    VendorAllocatorLoader(void* libHandle, CreateAllocatorFunc createAllocatorFunc,
+                          CreateBlockPoolFunc createBlockPoolFunc);
 
     void* mLibHandle;
     CreateAllocatorFunc mCreateAllocatorFunc;
+    CreateBlockPoolFunc mCreateBlockPoolFunc;
 };
 
 }  // namespace android

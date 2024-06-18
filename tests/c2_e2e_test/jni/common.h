@@ -142,6 +142,15 @@ private:
     uint64_t frame_index_ = 0;
 };
 
+struct PerformanceTimeStats {
+    PerformanceTimeStats() {}
+    explicit PerformanceTimeStats(const std::vector<double>& times);
+    double avg_us_ = 0.0;
+    double percentile_25_us_ = 0.0;
+    double percentile_50_us_ = 0.0;
+    double percentile_75_us_ = 0.0;
+};
+
 // The helper class to calculate FPS.
 class FPSCalculator {
 public:
@@ -151,6 +160,9 @@ public:
 
     // Calucalate FPS value.
     double CalculateFPS() const;
+
+    // Calucalate delivery time stats.
+    PerformanceTimeStats CalucalateDeliveryTimeStats() const;
 
 private:
     static constexpr double kMovingAvgWindowUs = 1000000;
