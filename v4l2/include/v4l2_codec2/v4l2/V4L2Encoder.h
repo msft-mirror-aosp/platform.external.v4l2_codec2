@@ -2,8 +2,8 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#ifndef ANDROID_V4L2_CODEC2_COMPONENTS_V4L2_ENCODER_H
-#define ANDROID_V4L2_CODEC2_COMPONENTS_V4L2_ENCODER_H
+#ifndef ANDROID_V4L2_CODEC2_V4L2_V4L2_ENCODER_H
+#define ANDROID_V4L2_CODEC2_V4L2_V4L2_ENCODER_H
 
 #include <stdint.h>
 #include <memory>
@@ -27,10 +27,6 @@ class V4L2Queue;
 
 class V4L2Encoder : public VideoEncoder {
 public:
-    // Number of buffers on V4L2 device queues.
-    static constexpr size_t kInputBufferCount = 2;
-    static constexpr size_t kOutputBufferCount = 2;
-
     static std::unique_ptr<VideoEncoder> create(
             C2Config::profile_t profile, std::optional<uint8_t> level, const ui::Size& visibleSize,
             uint32_t stride, uint32_t keyFramePeriod, C2Config::bitrate_mode_t bitrateMode,
@@ -198,4 +194,4 @@ private:
 
 }  // namespace android
 
-#endif  // ANDROID_V4L2_CODEC2_COMPONENTS_V4L2_ENCODER_H
+#endif  // ANDROID_V4L2_CODEC2_V4L2_V4L2_ENCODER_H
