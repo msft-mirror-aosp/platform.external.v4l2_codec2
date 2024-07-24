@@ -32,4 +32,22 @@ std::string toString(const ui::Size& size) {
     return std::to_string(size.width) + "x" + std::to_string(size.height);
 }
 
+// Check whether the specified profile is a valid profile for the specified codec.
+bool isValidProfileForCodec(VideoCodec codec, C2Config::profile_t profile) {
+    switch (codec) {
+    case VideoCodec::H264:
+        return ((profile >= C2Config::PROFILE_AVC_BASELINE) &&
+                (profile <= C2Config::PROFILE_AVC_ENHANCED_MULTIVIEW_DEPTH_HIGH));
+    case VideoCodec::VP8:
+        return ((profile >= C2Config::PROFILE_VP8_0) && (profile <= C2Config::PROFILE_VP8_3));
+    case VideoCodec::VP9:
+        return ((profile >= C2Config::PROFILE_VP9_0) && (profile <= C2Config::PROFILE_VP9_3));
+    case VideoCodec::HEVC:
+        return ((profile >= C2Config::PROFILE_HEVC_MAIN) &&
+                (profile <= C2Config::PROFILE_HEVC_3D_MAIN));
+    default:
+        return false;
+    }
+}
+
 }  // namespace android

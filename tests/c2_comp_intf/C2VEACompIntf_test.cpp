@@ -35,8 +35,8 @@ class C2VEACompIntfTest: public C2CompIntfTest {
 protected:
     C2VEACompIntfTest() {
         mReflector = std::make_shared<C2ReflectorHelper>();
-        auto componentInterface = std::make_shared<V4L2EncodeInterface>(testCompName, mReflector);
-        mIntf = std::shared_ptr<C2ComponentInterface>(new SimpleInterface<V4L2EncodeInterface>(
+        auto componentInterface = std::make_shared<EncodeInterface>(testCompName, mReflector);
+        mIntf = std::shared_ptr<C2ComponentInterface>(new SimpleInterface<EncodeInterface>(
                 testCompName, testCompNodeId, componentInterface));
     }
     ~C2VEACompIntfTest() override {
