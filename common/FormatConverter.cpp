@@ -3,6 +3,7 @@
 // found in the LICENSE file.
 
 //#define LOG_NDEBUG 0
+#define ATRACE_TAG ATRACE_TAG_VIDEO
 #define LOG_TAG "FormatConverter"
 
 #include <v4l2_codec2/common/FormatConverter.h>
@@ -19,6 +20,7 @@
 #include <libyuv.h>
 #include <ui/GraphicBuffer.h>
 #include <utils/Log.h>
+#include <utils/Trace.h>
 
 #include <v4l2_codec2/common/VideoTypes.h>  // for HalPixelFormat
 
@@ -176,6 +178,7 @@ c2_status_t FormatConverter::allocateBuffers(uint32_t count) {
 c2_status_t FormatConverter::convertBlock(uint64_t frameIndex,
                                           const C2ConstGraphicBlock& inputBlock,
                                           C2ConstGraphicBlock* convertedBlock) {
+    ATRACE_CALL();
     const C2GraphicView& inputView = inputBlock.map().get();
     C2PlanarLayout inputLayout = inputView.layout();
 
