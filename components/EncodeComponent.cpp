@@ -25,6 +25,7 @@
 
 #include <v4l2_codec2/common/EncodeHelpers.h>
 #include <v4l2_codec2/common/FormatConverter.h>
+#include <v4l2_codec2/common/H264.h>
 #include <v4l2_codec2/components/BitstreamBuffer.h>
 #include <v4l2_codec2/components/EncodeInterface.h>
 #include <v4l2_codec2/components/VideoEncoder.h>
@@ -679,6 +680,13 @@ bool EncodeComponent::updateEncodingParameters() {
         }
     }
 
+    C2Config::profile_t outputProfile = mInterface->getOutputProfile();
+    if (isH264Profile(outputProfile)) {
+        C2Config::level_t outputLevel = mInterface->getOutputLevel();
+        ui::Size inputSize = mInterface->getInputVisibleSize();
+        mMaxFramerate = maxFramerateForLevelH264(outputLevel, inputSize);
+    }
+
     return true;
 }
 
@@ -711,6 +719,18 @@ bool EncodeComponent::encode(C2ConstGraphicBlock block, uint64_t index, int64_t 
         int64_t newFramerate = std::max(
                 static_cast<int64_t>(std::round(1000000.0 / (timestamp - *mLastFrameTime))),
                 static_cast<int64_t>(1LL));
+        // Clients using input surface may exceed the maximum allowed framerate for the given
+        // profile. One of such examples is android.media.codec.cts.MediaCodecTest#testAbruptStop.
+        // To mitigate that, value is clamped to the maximum framerate for the given level and
+        // current frame size.
+        // See: b/362902868
+        if (newFramerate > mMaxFramerate) {
+            ALOGW("Frames are coming too fast - new framerate (%" PRIi64
+                  ") would exceed the maximum value (%" PRIu32 ")",
+                  newFramerate, mMaxFramerate);
+            newFramerate = mMaxFramerate;
+        }
+
         if (abs(mFramerate - newFramerate) > kMaxFramerateDiff) {
             ALOGV("Adjusting framerate to %" PRId64 " based on frame timestamps", newFramerate);
             mInterface->setFramerate(static_cast<uint32_t>(newFramerate));
