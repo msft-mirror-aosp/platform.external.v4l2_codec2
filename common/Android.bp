@@ -20,6 +20,7 @@ cc_library {
         "EncodeHelpers.cpp",
         "FormatConverter.cpp",
         "Fourcc.cpp",
+        "H264.cpp",
         "H264NalParser.cpp",
         "HEVCNalParser.cpp",
         "NalParser.cpp",
