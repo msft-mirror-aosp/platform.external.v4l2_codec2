@@ -6,6 +6,7 @@
 #define ANDROID_V4L2_CODEC2_COMPONENTS_ENCODE_COMPONENT_H
 
 #include <atomic>
+#include <limits>
 #include <memory>
 #include <optional>
 #include <unordered_map>
@@ -164,6 +165,8 @@ protected:
     C2Config::bitrate_mode_t mBitrateMode = C2Config::BITRATE_CONST;
     // The framerate currently configured on the v4l2 device.
     uint32_t mFramerate = 0;
+    // Maximum valid framerate for current output level and input frame size.
+    uint32_t mMaxFramerate = std::numeric_limits<uint32_t>::max();
     // The timestamp of the last frame encoded, used to dynamically adjust the framerate.
     std::optional<int64_t> mLastFrameTime;
 
