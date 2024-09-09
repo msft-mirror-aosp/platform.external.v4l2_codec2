@@ -11,20 +11,12 @@
 
 #include <cutils/properties.h>
 
+#include <v4l2_codec2/common/H264.h>
 #include <v4l2_codec2/components/BitstreamBuffer.h>
 #include <v4l2_codec2/components/EncodeInterface.h>
 #include <v4l2_codec2/v4l2/V4L2Encoder.h>
 
 namespace android {
-
-namespace {
-
-// Check whether the specified |profile| is an H.264 profile.
-bool IsH264Profile(C2Config::profile_t profile) {
-    return (profile >= C2Config::PROFILE_AVC_BASELINE &&
-            profile <= C2Config::PROFILE_AVC_ENHANCED_MULTIVIEW_DEPTH_HIGH);
-}
-}  // namespace
 
 // static
 std::atomic<int32_t> V4L2EncodeComponent::sConcurrentInstances = 0;
@@ -74,10 +66,10 @@ bool V4L2EncodeComponent::initializeEncoder() {
     C2Config::profile_t outputProfile = mInterface->getOutputProfile();
 
     // CSD only needs to be extracted when using an H.264 profile.
-    mExtractCSD = IsH264Profile(outputProfile);
+    mExtractCSD = isH264Profile(outputProfile);
 
     std::optional<uint8_t> h264Level;
-    if (IsH264Profile(outputProfile)) {
+    if (isH264Profile(outputProfile)) {
         h264Level = c2LevelToV4L2Level(mInterface->getOutputLevel());
     }
 
