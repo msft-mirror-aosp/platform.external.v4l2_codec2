@@ -3,6 +3,7 @@
 // found in the LICENSE file
 
 //#define LOG_NDEBUG 0
+#define ATRACE_TAG ATRACE_TAG_VIDEO
 #define LOG_TAG "EncodeComponent"
 
 #include <v4l2_codec2/components/EncodeComponent.h>
@@ -22,9 +23,11 @@
 #include <media/stagefright/MediaDefs.h>
 #include <ui/GraphicBuffer.h>
 #include <ui/Size.h>
+#include <utils/Trace.h>
 
 #include <v4l2_codec2/common/EncodeHelpers.h>
 #include <v4l2_codec2/common/FormatConverter.h>
+#include <v4l2_codec2/common/H264.h>
 #include <v4l2_codec2/components/BitstreamBuffer.h>
 #include <v4l2_codec2/components/EncodeInterface.h>
 #include <v4l2_codec2/components/VideoEncoder.h>
@@ -384,6 +387,7 @@ std::shared_ptr<C2ComponentInterface> EncodeComponent::intf() {
 }
 
 void EncodeComponent::startTask(bool* success, ::base::WaitableEvent* done) {
+    ATRACE_CALL();
     ALOGV("%s()", __func__);
     ALOG_ASSERT(mEncoderTaskRunner->RunsTasksInCurrentSequence());
 
@@ -392,6 +396,7 @@ void EncodeComponent::startTask(bool* success, ::base::WaitableEvent* done) {
 }
 
 void EncodeComponent::stopTask(::base::WaitableEvent* done) {
+    ATRACE_CALL();
     ALOGV("%s()", __func__);
     ALOG_ASSERT(mEncoderTaskRunner->RunsTasksInCurrentSequence());
 
@@ -412,6 +417,7 @@ void EncodeComponent::stopTask(::base::WaitableEvent* done) {
 }
 
 void EncodeComponent::queueTask(std::unique_ptr<C2Work> work) {
+    ATRACE_CALL();
     ALOGV("%s()", __func__);
     ALOG_ASSERT(mEncoderTaskRunner->RunsTasksInCurrentSequence());
     ALOG_ASSERT(mEncoder);
@@ -594,6 +600,7 @@ void EncodeComponent::onDrainDone(bool success) {
 
 void EncodeComponent::flushTask(::base::WaitableEvent* done,
                                 std::list<std::unique_ptr<C2Work>>* const flushedWork) {
+    ATRACE_CALL();
     ALOGV("%s()", __func__);
     ALOG_ASSERT(mEncoderTaskRunner->RunsTasksInCurrentSequence());
 
@@ -621,6 +628,7 @@ void EncodeComponent::setListenerTask(const std::shared_ptr<Listener>& listener,
 }
 
 bool EncodeComponent::updateEncodingParameters() {
+    ATRACE_CALL();
     ALOGV("%s()", __func__);
     ALOG_ASSERT(mEncoderTaskRunner->RunsTasksInCurrentSequence());
 
@@ -679,10 +687,18 @@ bool EncodeComponent::updateEncodingParameters() {
         }
     }
 
+    C2Config::profile_t outputProfile = mInterface->getOutputProfile();
+    if (isH264Profile(outputProfile)) {
+        C2Config::level_t outputLevel = mInterface->getOutputLevel();
+        ui::Size inputSize = mInterface->getInputVisibleSize();
+        mMaxFramerate = maxFramerateForLevelH264(outputLevel, inputSize);
+    }
+
     return true;
 }
 
 bool EncodeComponent::encode(C2ConstGraphicBlock block, uint64_t index, int64_t timestamp) {
+    ATRACE_CALL();
     ALOGV("%s()", __func__);
     ALOG_ASSERT(mEncoderTaskRunner->RunsTasksInCurrentSequence());
     ALOG_ASSERT(mEncoder);
@@ -711,6 +727,18 @@ bool EncodeComponent::encode(C2ConstGraphicBlock block, uint64_t index, int64_t 
         int64_t newFramerate = std::max(
                 static_cast<int64_t>(std::round(1000000.0 / (timestamp - *mLastFrameTime))),
                 static_cast<int64_t>(1LL));
+        // Clients using input surface may exceed the maximum allowed framerate for the given
+        // profile. One of such examples is android.media.codec.cts.MediaCodecTest#testAbruptStop.
+        // To mitigate that, value is clamped to the maximum framerate for the given level and
+        // current frame size.
+        // See: b/362902868
+        if (newFramerate > mMaxFramerate) {
+            ALOGW("Frames are coming too fast - new framerate (%" PRIi64
+                  ") would exceed the maximum value (%" PRIu32 ")",
+                  newFramerate, mMaxFramerate);
+            newFramerate = mMaxFramerate;
+        }
+
         if (abs(mFramerate - newFramerate) > kMaxFramerateDiff) {
             ALOGV("Adjusting framerate to %" PRId64 " based on frame timestamps", newFramerate);
             mInterface->setFramerate(static_cast<uint32_t>(newFramerate));
@@ -740,6 +768,7 @@ bool EncodeComponent::encode(C2ConstGraphicBlock block, uint64_t index, int64_t 
 }
 
 void EncodeComponent::flush() {
+    ATRACE_CALL();
     ALOGV("%s()", __func__);
     ALOG_ASSERT(mEncoderTaskRunner->RunsTasksInCurrentSequence());
 
@@ -771,6 +800,7 @@ void EncodeComponent::flush() {
 }
 
 void EncodeComponent::fetchOutputBlock(uint32_t size, std::unique_ptr<BitstreamBuffer>* buffer) {
+    ATRACE_CALL();
     ALOGV("Fetching linear block (size: %u)", size);
     std::shared_ptr<C2LinearBlock> block;
     c2_status_t status = mOutputBlockPool->fetchLinearBlock(
@@ -954,6 +984,7 @@ bool EncodeComponent::isWorkDone(const C2Work& work) const {
 }
 
 void EncodeComponent::reportWork(std::unique_ptr<C2Work> work) {
+    ATRACE_CALL();
     ALOG_ASSERT(work);
     ALOGV("%s(): Reporting work item as finished (index: %llu, timestamp: %llu)", __func__,
           work->input.ordinal.frameIndex.peekull(), work->input.ordinal.timestamp.peekull());
