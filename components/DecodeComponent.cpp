@@ -243,6 +243,10 @@ void DecodeComponent::stopTask() {
 
 c2_status_t DecodeComponent::reset() {
     ALOGV("%s()", __func__);
+    auto currentState = mComponentState.load();
+
+    if (currentState == ComponentState::STOPPED)
+        return C2_OK;
 
     return stop();
 }
