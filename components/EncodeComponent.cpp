@@ -3,6 +3,7 @@
 // found in the LICENSE file
 
 //#define LOG_NDEBUG 0
+#define ATRACE_TAG ATRACE_TAG_VIDEO
 #define LOG_TAG "EncodeComponent"
 
 #include <v4l2_codec2/components/EncodeComponent.h>
@@ -22,6 +23,7 @@
 #include <media/stagefright/MediaDefs.h>
 #include <ui/GraphicBuffer.h>
 #include <ui/Size.h>
+#include <utils/Trace.h>
 
 #include <v4l2_codec2/common/EncodeHelpers.h>
 #include <v4l2_codec2/common/FormatConverter.h>
@@ -385,6 +387,7 @@ std::shared_ptr<C2ComponentInterface> EncodeComponent::intf() {
 }
 
 void EncodeComponent::startTask(bool* success, ::base::WaitableEvent* done) {
+    ATRACE_CALL();
     ALOGV("%s()", __func__);
     ALOG_ASSERT(mEncoderTaskRunner->RunsTasksInCurrentSequence());
 
@@ -393,6 +396,7 @@ void EncodeComponent::startTask(bool* success, ::base::WaitableEvent* done) {
 }
 
 void EncodeComponent::stopTask(::base::WaitableEvent* done) {
+    ATRACE_CALL();
     ALOGV("%s()", __func__);
     ALOG_ASSERT(mEncoderTaskRunner->RunsTasksInCurrentSequence());
 
@@ -413,6 +417,7 @@ void EncodeComponent::stopTask(::base::WaitableEvent* done) {
 }
 
 void EncodeComponent::queueTask(std::unique_ptr<C2Work> work) {
+    ATRACE_CALL();
     ALOGV("%s()", __func__);
     ALOG_ASSERT(mEncoderTaskRunner->RunsTasksInCurrentSequence());
     ALOG_ASSERT(mEncoder);
@@ -603,6 +608,7 @@ void EncodeComponent::onDrainDone(bool success) {
 
 void EncodeComponent::flushTask(::base::WaitableEvent* done,
                                 std::list<std::unique_ptr<C2Work>>* const flushedWork) {
+    ATRACE_CALL();
     ALOGV("%s()", __func__);
     ALOG_ASSERT(mEncoderTaskRunner->RunsTasksInCurrentSequence());
 
@@ -630,6 +636,7 @@ void EncodeComponent::setListenerTask(const std::shared_ptr<Listener>& listener,
 }
 
 bool EncodeComponent::updateEncodingParameters() {
+    ATRACE_CALL();
     ALOGV("%s()", __func__);
     ALOG_ASSERT(mEncoderTaskRunner->RunsTasksInCurrentSequence());
 
@@ -699,6 +706,7 @@ bool EncodeComponent::updateEncodingParameters() {
 }
 
 bool EncodeComponent::encode(C2ConstGraphicBlock block, uint64_t index, int64_t timestamp) {
+    ATRACE_CALL();
     ALOGV("%s()", __func__);
     ALOG_ASSERT(mEncoderTaskRunner->RunsTasksInCurrentSequence());
     ALOG_ASSERT(mEncoder);
@@ -768,6 +776,7 @@ bool EncodeComponent::encode(C2ConstGraphicBlock block, uint64_t index, int64_t 
 }
 
 void EncodeComponent::flush() {
+    ATRACE_CALL();
     ALOGV("%s()", __func__);
     ALOG_ASSERT(mEncoderTaskRunner->RunsTasksInCurrentSequence());
 
@@ -799,6 +808,7 @@ void EncodeComponent::flush() {
 }
 
 void EncodeComponent::fetchOutputBlock(uint32_t size, std::unique_ptr<BitstreamBuffer>* buffer) {
+    ATRACE_CALL();
     ALOGV("Fetching linear block (size: %u)", size);
     std::shared_ptr<C2LinearBlock> block;
     c2_status_t status = mOutputBlockPool->fetchLinearBlock(
@@ -982,6 +992,7 @@ bool EncodeComponent::isWorkDone(const C2Work& work) const {
 }
 
 void EncodeComponent::reportWork(std::unique_ptr<C2Work> work) {
+    ATRACE_CALL();
     ALOG_ASSERT(work);
     ALOGV("%s(): Reporting work item as finished (index: %llu, timestamp: %llu)", __func__,
           work->input.ordinal.frameIndex.peekull(), work->input.ordinal.timestamp.peekull());
