@@ -6,3 +6,4 @@ bgrzesik@google.com
 mikrawczyk@google.com
 zyta@google.com
 acourbot@google.com
+include platform/system/core:/janitors/OWNERS #{LAST_RESORT_SUGGESTION}
