@@ -144,7 +144,7 @@ bool V4L2Decoder::start(const VideoCodec& codec, const size_t inputBufferSize,
         return false;
     }
 
-    if (!sendV4L2DecoderCmd(false)) {
+    if (!tryV4L2DecoderCmd(false)) {
         ALOGE("Device does not support flushing (V4L2_DEC_CMD_STOP)");
         return false;
     }
@@ -977,6 +977,20 @@ bool V4L2Decoder::sendV4L2DecoderCmd(bool start) {
     cmd.cmd = start ? V4L2_DEC_CMD_START : V4L2_DEC_CMD_STOP;
     if (mDevice->ioctl(VIDIOC_DECODER_CMD, &cmd) != 0) {
         ALOGE("ioctl() VIDIOC_DECODER_CMD failed: start=%d", start);
+        return false;
+    }
+
+    return true;
+}
+
+bool V4L2Decoder::tryV4L2DecoderCmd(bool start) {
+    ALOGV("%s(start=%d)", __func__, start);
+    ALOG_ASSERT(mTaskRunner->RunsTasksInCurrentSequence());
+
+    struct v4l2_decoder_cmd cmd;
+    memset(&cmd, 0, sizeof(cmd));
+    cmd.cmd = start ? V4L2_DEC_CMD_START : V4L2_DEC_CMD_STOP;
+    if (mDevice->ioctl(VIDIOC_TRY_DECODER_CMD, &cmd) != 0) {
         return false;
     }
 
