@@ -96,6 +96,7 @@ private:
     std::optional<struct v4l2_format> getFormatInfo();
     Rect getVisibleRect(const ui::Size& codedSize);
     bool sendV4L2DecoderCmd(bool start);
+    bool tryV4L2DecoderCmd(bool start);
 
     void setState(State newState);
     void onError();
