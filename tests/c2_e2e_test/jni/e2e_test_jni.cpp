@@ -23,7 +23,7 @@ class JniConfigureCallback : public android::ConfigureCallback {
 public:
     JniConfigureCallback(JNIEnv* env, jobject thiz) : env_(env), thiz_(thiz) {}
 
-    static constexpr char* kClassName = "org/chromium/c2/test/E2eTestActivity";
+    static constexpr char kClassName[] = "org/chromium/c2/test/E2eTestActivity";
 
     void OnCodecReady(void* codec) override {
         jclass cls = env_->FindClass(kClassName);
@@ -72,7 +72,7 @@ JNIEXPORT jint JNICALL Java_org_chromium_c2_test_E2eTestActivity_c2VideoTest(
     }
 
     char** final_args = new char*[test_args_count + 1];
-    final_args[0] = "e2e_test_jni";
+    final_args[0] = const_cast<char*>("e2e_test_jni");
     memcpy(final_args + 1, args, sizeof(args[0]) * test_args_count);
 
     ANativeWindow* native_window = ANativeWindow_fromSurface(env, surface);
