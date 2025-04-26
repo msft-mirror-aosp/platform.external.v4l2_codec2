@@ -71,6 +71,7 @@ class InputFile {
 public:
     explicit InputFile(std::string file_path);
     InputFile(std::string file_path, std::ios_base::openmode openmode);
+    virtual ~InputFile() = default;
 
     // Check if the file is valid.
     bool IsValid() const;

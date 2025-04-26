@@ -30,7 +30,7 @@ public:
 
     // Return the next fragment to be sent to the decoder, and advance the
     // iterator to after the returned fragment.
-    const Fragment* const GetNextFragment();
+    const Fragment* GetNextFragment();
 
     void Rewind() { next_fragment_iter_ = fragments_.begin(); }
     bool IsValid() const { return !fragments_.empty(); }

@@ -31,6 +31,4 @@ cc_library_shared {
     sdk_version: "28",
     stl: "c++_static",
     static_libs: ["libgtest_ndk_c++"],
-    // TODO(stevensd): Fix and reenable warnings
-    cflags: ["-Wno-everything"],
 }
