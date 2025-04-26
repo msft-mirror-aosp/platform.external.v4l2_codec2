@@ -124,7 +124,7 @@ EncodedDataHelper::EncodedDataHelper(const std::string& file_path, VideoCodecTyp
 
 EncodedDataHelper::~EncodedDataHelper() {}
 
-const EncodedDataHelper::Fragment* const EncodedDataHelper::GetNextFragment() {
+const EncodedDataHelper::Fragment* EncodedDataHelper::GetNextFragment() {
     if (ReachEndOfStream()) return nullptr;
     return next_fragment_iter_++->get();
 }
