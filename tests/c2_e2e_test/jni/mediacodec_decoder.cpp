@@ -257,7 +257,8 @@ bool MediaCodecDecoder::Decode() {
         case FAKE_FRAME_RENDERED:
             media_status_t status = AMediaCodec_releaseOutputBuffer(codec_, evt.idx, false);
             if (status != AMEDIA_OK) {
-                ALOGE("Failed to releaseOutputBuffer(index=%zu): %d", evt.idx, status);
+                // TODO(b/430337368): Resolve clang warnings
+                //ALOGE("Failed to releaseOutputBuffer(index=%zu): %d", evt.idx, status);
                 success = false;
             }
             break;
@@ -269,7 +270,8 @@ bool MediaCodecDecoder::Decode() {
 
 bool MediaCodecDecoder::EnqueueInputBuffers(int32_t index) {
     if (index < 0) {
-        ALOGE("Unknown error while dequeueInputBuffer: %zd", index);
+        // TODO(b/430337368): Resolve clang warnings
+        // ALOGE("Unknown error while dequeueInputBuffer: %zd", index);
         return false;
     }
 
@@ -288,7 +290,8 @@ bool MediaCodecDecoder::EnqueueInputBuffers(int32_t index) {
 
 bool MediaCodecDecoder::DequeueOutputBuffer(int32_t index, AMediaCodecBufferInfo info) {
     if (index < 0) {
-        ALOGE("Unknown error while dequeueOutputBuffer: %zd", index);
+        // TODO(b/430337368): Resolve clang warnings
+        // ALOGE("Unknown error while dequeueOutputBuffer: %zd", index);
         return false;
     }
 
@@ -302,9 +305,10 @@ bool MediaCodecDecoder::DequeueOutputBuffer(int32_t index, AMediaCodecBufferInfo
         base_timestamp_ns_ = now;
     } else if (now > GetReleaseTimestampNs(received_outputs_)) {
         drop_frame_count_++;
-        ALOGD("Drop frame #%d: frame %d deadline %" PRIu64 "us, actual %" PRIu64 "us",
-              drop_frame_count_, received_outputs_, (received_outputs_ * 1000000ull / frame_rate_),
-              (now - base_timestamp_ns_) / 1000);
+        // TODO(b/430337368): Resolve clang warnings
+        //  ALOGD("Drop frame #%d: frame %d deadline %" PRIu64 "us, actual %" PRIu64 "us",
+        //        drop_frame_count_, received_outputs_, (received_outputs_ * 1000000ull / frame_rate_),
+        //        (now - base_timestamp_ns_) / 1000);
         render_frame = false;  // We don't render the dropped frame.
     }
 
@@ -323,7 +327,8 @@ bool MediaCodecDecoder::FeedInputBuffer(size_t index) {
     size_t buf_size = 0;
     uint8_t* buf = AMediaCodec_getInputBuffer(codec_, index, &buf_size);
     if (!buf) {
-        ALOGE("Failed to getInputBuffer: index=%zu", index);
+        // TODO(b/430337368): Resolve clang warnings
+        // ALOGE("Failed to getInputBuffer: index=%zu", index);
         return false;
     }
 
@@ -345,8 +350,9 @@ bool MediaCodecDecoder::FeedInputBuffer(size_t index) {
     // output buffers from |codec_|.
     uint64_t timestamp_us = 0;
 
-    ALOGV("queueInputBuffer(index=%zu, offset=0, size=%zu, time=%" PRIu64 ", flags=%u) #%d", index,
-          fragment->data.size(), timestamp_us, input_flag, input_fragment_index_);
+    // TODO(b/430337368): Resolve clang warnings
+    // ALOGV("queueInputBuffer(index=%zu, offset=0, size=%zu, time=%" PRIu64 ", flags=%u) #%d", index,
+    //          fragment->data.size(), timestamp_us, input_flag, input_fragment_index_);
     media_status_t status = AMediaCodec_queueInputBuffer(
             codec_, index, 0 /* offset */, fragment->data.size(), timestamp_us, input_flag);
     if (status != AMEDIA_OK) {
@@ -362,7 +368,8 @@ bool MediaCodecDecoder::FeedEOSInputBuffer(size_t index) {
     // robustness.
     uint64_t timestamp_us = 0;
 
-    ALOGV("queueInputBuffer(index=%zu) EOS", index);
+    // TODO(b/430337368): Resolve clang warnings
+    // ALOGV("queueInputBuffer(index=%zu) EOS", index);
     media_status_t status =
             AMediaCodec_queueInputBuffer(codec_, index, 0 /* offset */, 0 /* size */, timestamp_us,
                                          AMEDIACODEC_BUFFER_FLAG_END_OF_STREAM);
@@ -380,14 +387,16 @@ bool MediaCodecDecoder::ReceiveOutputBuffer(int32_t index, const AMediaCodecBuff
     if (!surface_) {
         buf = AMediaCodec_getOutputBuffer(codec_, index, &out_size);
         if (!buf) {
-            ALOGE("Failed to getOutputBuffer(index=%zu)", index);
+            // TODO(b/430337368): Resolve clang warnings
+            // ALOGE("Failed to getOutputBuffer(index=%zu)", index);
             return false;
         }
     }
 
     received_outputs_++;
-    ALOGV("ReceiveOutputBuffer(index=%zu, size=%d, flags=%u) #%d", index, info.size, info.flags,
-          received_outputs_);
+    // TODO(b/430337368): Resolve clang warnings
+    // ALOGV("ReceiveOutputBuffer(index=%zu, size=%d, flags=%u) #%d", index, info.size, info.flags,
+    //       received_outputs_);
 
     // Do not callback for dummy EOS output (info.size == 0)
     if (info.size > 0) {
@@ -405,7 +414,8 @@ bool MediaCodecDecoder::ReceiveOutputBuffer(int32_t index, const AMediaCodecBuff
                                         codec_, index, GetReleaseTimestampNs(received_outputs_))
                               : AMediaCodec_releaseOutputBuffer(codec_, index, false /* render */);
         if (status != AMEDIA_OK) {
-            ALOGE("Failed to releaseOutputBuffer(index=%zu): %d", index, status);
+            // TODO(b/430337368): Resolve clang warnings
+            // ALOGE("Failed to releaseOutputBuffer(index=%zu): %d", index, status);
             return false;
         }
     }
