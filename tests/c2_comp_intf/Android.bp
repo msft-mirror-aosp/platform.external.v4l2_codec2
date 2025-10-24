@@ -10,6 +10,9 @@ package {
 cc_test {
     name: "C2VEACompIntf_test",
     vendor: true,
+    defaults: [
+        "libcodec2-impl-defaults",
+    ],
 
     srcs: [
         "C2CompIntfTest.cpp",
@@ -19,7 +22,6 @@ cc_test {
     shared_libs: [
         "libchrome",
         "libcodec2",
-        "libcodec2_vndk",
         "libcutils",
         "liblog",
         "libui",
