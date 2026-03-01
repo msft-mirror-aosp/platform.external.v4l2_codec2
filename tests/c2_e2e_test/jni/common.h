@@ -6,6 +6,7 @@
 #define C2_E2E_TEST_COMMON_H_
 
 #include <fstream>
+#include <functional>
 #include <ios>
 #include <memory>
 #include <string>
